@@ -1,6 +1,11 @@
 [package]
 name = "tock"
 version = "0.1.0"
+authors = ["Sertan Canpolat <58915038+scnplt@users.noreply.github.com>"]
+license = "MIT"
 edition = "2024"
 
 [dependencies]
+color-eyre = "0.6.3"
+crossterm = "0.28.1"
+ratatui = "0.29.0"
