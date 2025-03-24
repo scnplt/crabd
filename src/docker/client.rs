@@ -12,9 +12,9 @@ impl DockerClient {
         Ok(Self { client: Docker::connect_with_local_defaults()? })
     }
 
-    pub async fn list_containers(&self, show_all: bool) -> Result<Vec<ContainerSummary>, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn list_containers(&self) -> Result<Vec<ContainerSummary>, Box<dyn std::error::Error + Send + Sync>> {
         Ok(self.client.list_containers(Some(ListContainersOptions::<String> { 
-            all: show_all, 
+            all: true, 
             ..Default::default() 
         })).await?)
     }
