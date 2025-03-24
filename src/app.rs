@@ -57,46 +57,35 @@ impl App {
 
     fn get_first_bottom_line(&self) -> Line<'_> {
         if let CurrentScreen::Info { .. } = self.current_screen {
-            return Line::from("");
+            return Line::from(vec![
+                " Back: ".into(),
+                "<H> ".blue().bold(),
+            ]);
         }
 
         let mut values = vec![
-            " Down: ".into(),
-            "<J>".blue().bold(),
-            " Up: ".into(),
-            "<K>".blue().bold(),
             " Details: ".into(),
             "<Ent>".blue().bold(),
             " Show All: ".into(),
-            "<T>".blue().bold(),
-            " Quit: ".into(),
-            "<Q> ".blue().bold(),
+            "<T> ".blue().bold(),
         ];
 
         if let BarState::ShowAll { .. } = self.bar_state {
-            values[6] = " Running: ".into();
-            values[7] = "<T>".blue().bold(); 
+            values[2] = " Running: ".into();
         }
 
         Line::from(values)
     }
 
     fn get_second_bottom_line(&self) -> Line<'_> {
-        let mut values = vec![
+        let values = vec![
             " Restart: ".into(),
             "<R>".green().bold(),
             " Stop: ".into(),
             "<S>".red().bold(),
             " Kill: ".into(),
             "<X> ".red().bold(),
-            "".into(),
-            "".into(),
         ];
-
-        if let CurrentScreen::Info { .. } = self.current_screen {
-            values[6] = "Back: ".into();
-            values[7] = "<H> ".blue().bold()
-        }
 
         Line::from(values)
     }
@@ -113,7 +102,7 @@ impl App {
 
     fn handle_key_event(&mut self, key_event: KeyEvent) {
         match key_event.code {
-            KeyCode::Char('q') => self.exit = true,
+            KeyCode::Char('q') | KeyCode::Esc => self.exit = true,
             KeyCode::Char('t') => {
                 self.bar_state = match self.bar_state {
                     BarState::Default => BarState::ShowAll,
