@@ -12,6 +12,8 @@ use ratatui::{
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 
 use std::io;
+
+use crate::views::container_list::render_container_list;
  
  #[derive(Default)]
 pub enum CurrentScreen {
@@ -45,13 +47,27 @@ impl App {
     }
 
     fn draw(&self, frame: &mut Frame) {
+        let title = Line::from(self.get_title().bold());
+        let block = Block::bordered()
+            .title(title.left_aligned())
+            .title_bottom(self.get_first_bottom_line().left_aligned())
+            .title_bottom(self.get_second_bottom_line().right_aligned())
+            .border_set(border::THICK);
+
+        render_container_list(frame, &[], 0, false);
+        frame.render_widget(block, frame.area());
+
+        /* 
+        render_container_list();
+        block.render(area, buf); 
         frame.render_widget(self, frame.area());
+        */
     }
 
     fn get_title(&self) -> &str {
         match self.current_screen {
-            CurrentScreen::List => " Containers ",
-            CurrentScreen::Info => " Details ",
+            CurrentScreen::List => "Containers ",
+            CurrentScreen::Info => "Details ",
         }
     }
 
@@ -117,19 +133,5 @@ impl App {
             KeyCode::Enter => self.current_screen = CurrentScreen::Info,
             _ => {}
         }
-    }
-}
-
-impl Widget for &App {
-    fn render(self, area: Rect, buf: &mut Buffer) {
-        let title = Line::from(self.get_title().bold());
-        let block = Block::bordered()
-            .title(title.left_aligned())
-            .title_bottom(self.get_first_bottom_line().left_aligned())
-            .title_bottom(self.get_second_bottom_line().right_aligned())
-            .border_set(border::THICK);
-        
-        block.render(area, buf);
-
     }
 }
