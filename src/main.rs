@@ -1,3 +1,6 @@
+mod docker;
+mod views;
+
 mod app;
 
 use std::io;
