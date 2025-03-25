@@ -142,11 +142,11 @@ impl ContainersTable {
         let table = Table::new(
             rows,
             vec![
-                Constraint::Percentage(15),
-                Constraint::Percentage(15),
+                Constraint::Length(12),
+                Constraint::Percentage(20),
                 Constraint::Percentage(30),
                 Constraint::Percentage(10),
-                Constraint::Percentage(20),
+                Constraint::Min(15),
             ],
         )
         .header(header)
