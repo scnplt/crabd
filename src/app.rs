@@ -1,4 +1,7 @@
-use crate::views::container_list::render_container_list;
+use crate::views::{
+    container_list::render_container_list, 
+    container_list_table::{ContainersTable, ContainerData}
+};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use tokio::sync::mpsc::Receiver;
@@ -22,27 +25,47 @@ pub struct App {
     pub current_screen: CurrentScreen,
     pub should_exit: bool,
     pub show_all: bool,
-    pub containers: Vec<ContainerSummary>,
-    selected_index: usize,
+    //pub containers: Vec<ContainerSummary>,
+    //selected_index: usize,
+    containers_table: ContainersTable,
 }
 
 impl App {
 
     pub async fn new(containers: Arc<Mutex<Vec<ContainerSummary>>>) -> Self {
         let show_all = false;
-        let containers_list = containers.lock().unwrap().to_vec();
+        let containers_data: Vec<ContainerData> = get_filtered_containers(containers.lock().unwrap().to_vec(), show_all)
+            .iter()
+            .map(|container| {
+                ContainerData {
+                    id: container.id.as_deref().unwrap_or("-").to_string(),
+                    name: container.names.as_ref().map_or("-", |n| &n[0]).to_string(),
+                    image: container.image.as_deref().unwrap_or("-").to_string(),
+                    state: container.state.as_deref().unwrap_or("-").to_string(),
+                    ports: "".to_string()
+                }
+            })
+            .collect();
+        
+        //let containers_list = get_filtered_containers(containers.lock().unwrap().to_vec(), show_all);
 
         Self {
             current_screen: CurrentScreen::List,
             should_exit: false,
             show_all,
-            containers: get_filtered_containers(containers_list, show_all),
-            selected_index: 0
+            //containers: get_filtered_containers(containers_list, show_all),
+            //selected_index: 0,
+            containers_table: ContainersTable::new(containers_data)
         }
     }
 
     pub async fn run(&mut self, terminal: &mut DefaultTerminal, rx: &mut Receiver<Vec<ContainerSummary>>) -> io::Result<()> {
         while !self.should_exit {
+            terminal.draw(|frame| self.containers_table.render_table(frame))?;
+            self.handle_events()?;
+        }
+
+        /* while !self.should_exit {
             terminal.draw(|frame| self.draw(frame))?;
 
             if let Ok(result) = rx.try_recv() {
@@ -56,12 +79,12 @@ impl App {
                 self.containers = updated_container_list;
             }
             self.handle_events()?;
-        }
+        } */
         Ok(())
     }
 
     fn draw(&self, frame: &mut Frame) {
-        let title = Line::from(self.get_title().bold());
+        /* let title = Line::from(self.get_title().bold());
         let block = Block::bordered()
             .title(title.left_aligned())
             .title_bottom(self.get_first_bottom_line().left_aligned())
@@ -69,7 +92,7 @@ impl App {
             .border_set(border::THICK);
         
         render_container_list(frame, &self.containers, self.selected_index);
-        frame.render_widget(block, frame.area());
+        frame.render_widget(block, frame.area()); */
     }
 
     fn get_title(&self) -> &str {
@@ -125,8 +148,8 @@ impl App {
 
     fn handle_key_event(&mut self, code: KeyCode) {
         match code {
-            KeyCode::Char('j') | KeyCode::Down => self.select_next_container(),
-            KeyCode::Char('k') | KeyCode::Up => self.select_previous_container(),
+            //KeyCode::Char('j') | KeyCode::Down => self.select_next_container(),
+            //KeyCode::Char('k') | KeyCode::Up => self.select_previous_container(),
             KeyCode::Char('q') | KeyCode::Esc => self.should_exit = true,
             KeyCode::Char('t') => self.show_all = !self.show_all,
             KeyCode::Char('h') => self.go_to_list_screen(),
@@ -135,7 +158,7 @@ impl App {
         }
     }
 
-    fn select_previous_container(&mut self) {
+    /* fn select_previous_container(&mut self) {
         if self.selected_index == 0 {
             self.selected_index = self.containers.len() - 1;
             return;
@@ -149,7 +172,7 @@ impl App {
             return;
         }
         self.selected_index += 1;
-    }
+    } */
 
     fn go_to_list_screen(&mut self) {
         if let CurrentScreen::Info { .. } = self.current_screen {
