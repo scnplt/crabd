@@ -1,19 +1,15 @@
 mod docker;
 mod views;
-
 mod app;
-
-use std::io;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-
-
-use tokio::sync::{mpsc};
 
 use crate::app::App;
 use crate::docker::client::DockerClient;
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::sync::mpsc;
+
+#[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
     let docker = DockerClient::new()?;
     let containers = Arc::new(Mutex::new(docker.list_containers().await.unwrap()));

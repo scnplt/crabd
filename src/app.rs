@@ -1,21 +1,17 @@
+use crate::views::container_list::render_container_list;
+
+use crossterm::event::{self, Event, KeyCode, KeyEvent};
+use tokio::sync::mpsc::Receiver;
+use std::{io, sync::{Arc, Mutex}, time::Duration};
 use bollard::secret::ContainerSummary;
 use ratatui::{
-    buffer::Buffer, 
-    layout::Rect, 
     style::Stylize, 
     symbols::border, 
     text::Line, 
-    widgets::{Block, Widget}, 
+    widgets::Block, 
     DefaultTerminal, 
     Frame
 };
-
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
-use tokio::{sync::{mpsc::Receiver}, task::futures};
-
-use std::{io, sync::{Arc, Mutex}, time::Duration};
-
-use crate::views::container_list::render_container_list;
  
 pub enum CurrentScreen {
     List,
@@ -24,7 +20,7 @@ pub enum CurrentScreen {
 
 pub struct App {
     pub current_screen: CurrentScreen,
-    pub exit: bool,
+    pub should_exit: bool,
     pub show_all: bool,
     pub containers: Vec<ContainerSummary>,
     selected_index: usize,
@@ -33,22 +29,31 @@ pub struct App {
 impl App {
 
     pub async fn new(containers: Arc<Mutex<Vec<ContainerSummary>>>) -> Self {
-        let container_list = containers.lock().unwrap();
+        let show_all = false;
+        let containers_list = containers.lock().unwrap().to_vec();
 
         Self {
             current_screen: CurrentScreen::List,
-            exit: false,
-            show_all: false,
-            containers: container_list.to_vec(),
+            should_exit: false,
+            show_all,
+            containers: get_filtered_containers(containers_list, show_all),
             selected_index: 0
         }
     }
 
     pub async fn run(&mut self, terminal: &mut DefaultTerminal, rx: &mut Receiver<Vec<ContainerSummary>>) -> io::Result<()> {
-        while !self.exit {
+        while !self.should_exit {
             terminal.draw(|frame| self.draw(frame))?;
-            if let Ok(new_containers) = rx.try_recv() {
-                self.containers = new_containers;
+
+            if let Ok(result) = rx.try_recv() {
+                let updated_container_list = get_filtered_containers(result, self.show_all);
+                let new_last_index = updated_container_list.len() - 1;
+                
+                if self.selected_index > new_last_index {
+                    self.selected_index = new_last_index;
+                }
+
+                self.containers = updated_container_list;
             }
             self.handle_events()?;
         }
@@ -63,7 +68,7 @@ impl App {
             .title_bottom(self.get_second_bottom_line().right_aligned())
             .border_set(border::THICK);
         
-        render_container_list(frame, &self.containers, self.selected_index, self.show_all);
+        render_container_list(frame, &self.containers, self.selected_index);
         frame.render_widget(block, frame.area());
     }
 
@@ -115,8 +120,6 @@ impl App {
                 self.handle_key_event(code);
             }
         }
-
-        
         Ok(())
     }
 
@@ -124,14 +127,10 @@ impl App {
         match code {
             KeyCode::Char('j') | KeyCode::Down => self.select_next_container(),
             KeyCode::Char('k') | KeyCode::Up => self.select_previous_container(),
-            KeyCode::Char('q') | KeyCode::Esc => self.exit = true,
+            KeyCode::Char('q') | KeyCode::Esc => self.should_exit = true,
             KeyCode::Char('t') => self.show_all = !self.show_all,
-            KeyCode::Char('h') => {
-                if let CurrentScreen::Info { .. } = self.current_screen {
-                    self.current_screen = CurrentScreen::List;
-                }
-            }
-            KeyCode::Enter => self.current_screen = CurrentScreen::Info,
+            KeyCode::Char('h') => self.go_to_list_screen(),
+            KeyCode::Enter => self.go_to_info_screen(),
             _ => {}
         }
     }
@@ -151,4 +150,25 @@ impl App {
         }
         self.selected_index += 1;
     }
+
+    fn go_to_list_screen(&mut self) {
+        if let CurrentScreen::Info { .. } = self.current_screen {
+            self.current_screen = CurrentScreen::List;
+        }
+    }
+
+    fn go_to_info_screen(&mut self) {
+        if let CurrentScreen::List { .. } = self.current_screen {
+            self.current_screen = CurrentScreen::Info;
+        }
+    }
+}
+
+fn get_filtered_containers(containers: Vec<ContainerSummary>, show_all: bool) -> Vec<ContainerSummary> {
+    if show_all { return containers; }
+
+    containers.iter()
+        .filter(|container| container.state.as_deref() != Some("exited"))
+        .cloned()
+        .collect()
 }
