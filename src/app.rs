@@ -1,12 +1,9 @@
-use crate::views::{
-    container_list::render_container_list, 
-    container_list_table::{ContainersTable, ContainerData}
-};
+use crate::views::container_list_table::{ContainersTable, ContainerData};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use tokio::sync::mpsc::Receiver;
 use std::{io, sync::{Arc, Mutex}, time::Duration};
-use bollard::secret::ContainerSummary;
+use bollard::secret::{ContainerSummary, Port, PortTypeEnum};
 use ratatui::{
     style::Stylize, 
     symbols::border, 
@@ -25,8 +22,6 @@ pub struct App {
     pub current_screen: CurrentScreen,
     pub should_exit: bool,
     pub show_all: bool,
-    //pub containers: Vec<ContainerSummary>,
-    //selected_index: usize,
     containers_table: ContainersTable,
 }
 
@@ -36,32 +31,20 @@ impl App {
         let show_all = false;
         let containers_data: Vec<ContainerData> = get_filtered_containers(containers.lock().unwrap().to_vec(), show_all)
             .iter()
-            .map(|container| {
-                ContainerData {
-                    id: container.id.as_deref().unwrap_or("-").to_string(),
-                    name: container.names.as_ref().map_or("-", |n| &n[0]).to_string(),
-                    image: container.image.as_deref().unwrap_or("-").to_string(),
-                    state: container.state.as_deref().unwrap_or("-").to_string(),
-                    ports: "".to_string()
-                }
-            })
+            .map(map_to_container_data)
             .collect();
-        
-        //let containers_list = get_filtered_containers(containers.lock().unwrap().to_vec(), show_all);
 
         Self {
             current_screen: CurrentScreen::List,
             should_exit: false,
             show_all,
-            //containers: get_filtered_containers(containers_list, show_all),
-            //selected_index: 0,
             containers_table: ContainersTable::new(containers_data)
         }
     }
 
     pub async fn run(&mut self, terminal: &mut DefaultTerminal, rx: &mut Receiver<Vec<ContainerSummary>>) -> io::Result<()> {
         while !self.should_exit {
-            terminal.draw(|frame| self.containers_table.render_table(frame))?;
+            terminal.draw(|frame| self.containers_table.draw(frame))?;
             self.handle_events()?;
         }
 
@@ -83,8 +66,8 @@ impl App {
         Ok(())
     }
 
-    fn draw(&self, frame: &mut Frame) {
-        /* let title = Line::from(self.get_title().bold());
+    /* fn draw(&self, frame: &mut Frame) {
+        let title = Line::from(self.get_title().bold());
         let block = Block::bordered()
             .title(title.left_aligned())
             .title_bottom(self.get_first_bottom_line().left_aligned())
@@ -92,17 +75,17 @@ impl App {
             .border_set(border::THICK);
         
         render_container_list(frame, &self.containers, self.selected_index);
-        frame.render_widget(block, frame.area()); */
-    }
+        frame.render_widget(block, frame.area()); 
+    }*/
 
-    fn get_title(&self) -> &str {
+    /* fn get_title(&self) -> &str {
         match self.current_screen {
             CurrentScreen::List => "Containers ",
             CurrentScreen::Info => "Details ",
         }
-    }
+    } */
 
-    fn get_first_bottom_line(&self) -> Line<'_> {
+    /* fn get_first_bottom_line(&self) -> Line<'_> {
         if let CurrentScreen::Info { .. } = self.current_screen {
             return Line::from(vec![
                 " Back: ".into(),
@@ -122,9 +105,9 @@ impl App {
         }
 
         Line::from(values)
-    }
+    } */
 
-    fn get_second_bottom_line(&self) -> Line<'_> {
+    /* fn get_second_bottom_line(&self) -> Line<'_> {
         let values = vec![
             " Restart: ".into(),
             "<R>".green().bold(),
@@ -135,7 +118,7 @@ impl App {
         ];
 
         Line::from(values)
-    }
+    } */
 
     fn handle_events(&mut self) -> io::Result<()> {
         if crossterm::event::poll(Duration::from_millis(50))? {
@@ -148,8 +131,8 @@ impl App {
 
     fn handle_key_event(&mut self, code: KeyCode) {
         match code {
-            //KeyCode::Char('j') | KeyCode::Down => self.select_next_container(),
-            //KeyCode::Char('k') | KeyCode::Up => self.select_previous_container(),
+            KeyCode::Char('j') | KeyCode::Down => self.containers_table.next_row(),
+            KeyCode::Char('k') | KeyCode::Up => self.containers_table.previous_row(),
             KeyCode::Char('q') | KeyCode::Esc => self.should_exit = true,
             KeyCode::Char('t') => self.show_all = !self.show_all,
             KeyCode::Char('h') => self.go_to_list_screen(),
@@ -157,22 +140,6 @@ impl App {
             _ => {}
         }
     }
-
-    /* fn select_previous_container(&mut self) {
-        if self.selected_index == 0 {
-            self.selected_index = self.containers.len() - 1;
-            return;
-        }
-        self.selected_index -= 1;
-    }
-
-    fn select_next_container(&mut self) {
-        if self.selected_index == self.containers.len() - 1 {
-            self.selected_index = 0;
-            return;
-        }
-        self.selected_index += 1;
-    } */
 
     fn go_to_list_screen(&mut self) {
         if let CurrentScreen::Info { .. } = self.current_screen {
@@ -194,4 +161,36 @@ fn get_filtered_containers(containers: Vec<ContainerSummary>, show_all: bool) ->
         .filter(|container| container.state.as_deref() != Some("exited"))
         .cloned()
         .collect()
+}
+
+fn map_to_container_data(container: &ContainerSummary) -> ContainerData {
+    let mut name = "NaN".to_string();
+    if let Some(n) = container.names.as_deref().unwrap().first() {
+        if let Some(stripped) = n.strip_prefix('/') {
+            name = stripped.to_string()
+        }
+    }
+    
+    ContainerData {
+        id: container.id.as_deref().unwrap_or("-").to_string(),
+        name,
+        image: container.image.as_deref().unwrap_or("-").to_string(),
+        state: container.state.as_deref().unwrap_or("-").to_string(),
+        ports: container.ports.as_ref().map_or("-".to_string(), get_ports_text),
+    }
+}
+
+fn get_ports_text(ports: &Vec<Port>) -> String {
+    let mut filtered_ports: Vec<(u16, u16, PortTypeEnum)> = ports.iter()
+        .filter(|p| p.public_port.is_some())
+        .map(|p| (p.private_port, p.public_port.unwrap(), p.typ.unwrap()))
+        .collect();
+
+    filtered_ports.sort_by_key(|&(private, _, _)| private);
+    filtered_ports.dedup();
+    
+    filtered_ports.iter()
+        .map(|&(private, public, typ)| format!("{}:{}/{}", private, public, typ))
+        .collect::<Vec<String>>()
+        .join("\n")
 }

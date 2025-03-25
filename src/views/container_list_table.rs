@@ -13,6 +13,11 @@ use ratatui::{
 };
 use style::palette::tailwind;
 
+const INFO_TEXT: [&str; 2] = [
+    "(Q) Quit | (Ent) details | (T) show all | (H|Esc) back",
+    "(J) down | (K) up | (R) restart | (S) stop | (X) Kill", 
+];
+
 struct TableColors {
     buffer_bg: Color,
     header_bg: Color,
@@ -21,6 +26,7 @@ struct TableColors {
     selected_row_fg: Color,
     normal_row_color: Color,
     alt_row_color: Color,
+    footer_border_color: Color,
 }
 
 impl TableColors {
@@ -33,6 +39,7 @@ impl TableColors {
             selected_row_fg: tailwind::BLUE.c400,
             normal_row_color: tailwind::SLATE.c950,
             alt_row_color: tailwind::SLATE.c900,
+            footer_border_color: tailwind::BLUE.c400,
         }
     }
 }
@@ -54,7 +61,6 @@ impl ContainerData {
 pub struct ContainersTable {
     state: TableState,
     items: Vec<ContainerData>,
-    selected_index: usize,
     colors: TableColors
 }
 
@@ -63,7 +69,6 @@ impl ContainersTable {
         Self {
             state: TableState::default().with_selected(0),
             items,
-            selected_index: 0,
             colors: TableColors::new()
         }
     }
@@ -96,18 +101,24 @@ impl ContainersTable {
         self.state.select(Some(index));
     }
 
-    pub fn render_table(&mut self, frame: &mut Frame) {
+    pub fn draw(&mut self, frame: &mut Frame) {
         let vertical = &Layout::vertical([Constraint::Min(5), Constraint::Length(4)]);
         let rects = vertical.split(frame.area());
 
+        self.render_table(frame, rects[0]);
+        self.render_footer(frame, rects[1]);
+    }
+
+    fn render_table(&mut self, frame: &mut Frame, area: Rect) {
         let header_style = Style::default()
             .fg(self.colors.header_fg)
             .bg(self.colors.header_bg);
+
         let selected_row_style = Style::default()
             .add_modifier(Modifier::REVERSED)
             .fg(self.colors.selected_row_fg);
 
-        let header = ["ID", "Name", "Image", "State", "Pors"]
+        let header = ["ID", "Name", "Image", "State", "Ports"]
             .into_iter()
             .map(Cell::from)
             .collect::<Row>()
@@ -120,22 +131,24 @@ impl ContainersTable {
                 _ => self.colors.alt_row_color,
             };
             let item = data.ref_array();
+            let ports: Vec<&str> = data.ports.split("\n").collect();            
+
             item.into_iter()
                 .map(|content| Cell::from(Text::from(format!("\n{content}\n"))))
                 .collect::<Row>()
                 .style(Style::new().fg(self.colors.row_fg).bg(color))
-                .height(4)
+                .height((ports.len() + 2) as u16)
         });
 
-        let bar = " █ ";
+        let bar = " ● ";
 
         let table = Table::new(
             rows,
             vec![
+                Constraint::Percentage(15),
+                Constraint::Percentage(25),
                 Constraint::Percentage(20),
-                Constraint::Percentage(20),
-                Constraint::Percentage(20),
-                Constraint::Percentage(20),
+                Constraint::Percentage(10),
                 Constraint::Percentage(20),
             ],
         )
@@ -145,11 +158,27 @@ impl ContainersTable {
         .highlight_symbol(Text::from(vec![
             "".into(),
             bar.into(),
-            bar.into(),
-            "".into()
         ]))
         .highlight_spacing(HighlightSpacing::Always);
 
-        frame.render_stateful_widget(table, rects[0], &mut self.state);
+        frame.render_stateful_widget(table, area, &mut self.state);
+    }
+
+    fn render_footer(&mut self, frame: &mut Frame, area: Rect) {
+        let footer_style = Style::new()
+            .fg(self.colors.row_fg)
+            .bg(self.colors.buffer_bg);
+        let block_style = Style::new().fg(self.colors.footer_border_color);
+
+        let block = Block::bordered()
+            .border_type(BorderType::Double)
+            .border_style(block_style);
+
+        let footer = Paragraph::new(Text::from_iter(INFO_TEXT))
+            .style(footer_style)
+            .centered()
+            .block(block);
+        
+        frame.render_widget(footer, area);
     }
 }
