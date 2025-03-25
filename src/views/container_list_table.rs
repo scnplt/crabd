@@ -11,8 +11,8 @@ use ratatui::{
 use style::palette::tailwind;
 
 const INFO_TEXT: [&str; 2] = [
-    "<Q> quit       | <J> down    | <K> up    | <T> view mode | <H/Esc> back",
-    "<Ent> details  | <R> restart | <S> stop  | <X> kill      | <D/Del> remove", 
+    "<Q/Esc> quit    | <J> down    | <K> up   | <T> view mode | <H/B>   back",
+    "<Ent>   details | <R> restart | <S> stop | <X> kill      | <D/Del> remove", 
 ];
 
 struct TableColors {

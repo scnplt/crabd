@@ -4,7 +4,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use tokio::sync::mpsc::Receiver;
 use std::{io, sync::{Arc, Mutex}, time::Duration};
 use bollard::secret::{ContainerSummary, Port, PortTypeEnum};
-use ratatui::DefaultTerminal;
+use ratatui::{DefaultTerminal, text::Text, widgets::Paragraph};
  
 pub enum CurrentScreen {
     List,
@@ -53,18 +53,29 @@ impl App {
 
     pub async fn run(&mut self, terminal: &mut DefaultTerminal, rx: &mut Receiver<Vec<ContainerSummary>>) -> io::Result<()> {
         while !self.should_exit {
-            terminal.draw(|frame| self.containers_table.draw(frame))?;
-
-            if let Ok(result) = rx.try_recv() {
-                let updated_container_list: Vec<ContainerData> = map_to_container_data(result, self.show_all);
-                self.containers_table.items = updated_container_list;
+            match self.current_screen {
+                CurrentScreen::List => self.draw_containers_table(terminal, rx).await,
+                CurrentScreen::Info => self.draw_container_info(terminal).await
             }
-
-            self.handle_container_operations().await;
             self.handle_events()?;
         }
-
         Ok(())
+    }
+
+    async fn draw_containers_table(&mut self, terminal: &mut DefaultTerminal, rx: &mut Receiver<Vec<ContainerSummary>>) {
+        terminal.draw(|frame| self.containers_table.draw(frame)).unwrap();
+
+        if let Ok(result) = rx.try_recv() {
+            let updated_container_list: Vec<ContainerData> = map_to_container_data(result, self.show_all);
+            self.containers_table.items = updated_container_list;
+        }
+
+        self.handle_container_operations().await;
+    }
+
+    async fn draw_container_info(&mut self, terminal: &mut DefaultTerminal) {
+        let placeholder = Paragraph::new(Text::from("Lorem Ipsum")).centered();
+        terminal.draw(|frame| frame.render_widget(placeholder, frame.area())).unwrap();
     }
 
     async fn handle_container_operations(&mut self) {
@@ -94,7 +105,7 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.containers_table.previous_row(),
             KeyCode::Char('q') | KeyCode::Esc => self.should_exit = true,
             KeyCode::Char('t') => self.show_all = !self.show_all,
-            KeyCode::Char('h') => self.go_to_list_screen(),
+            KeyCode::Char('h') | KeyCode::Char('b') => self.go_to_list_screen(),
             KeyCode::Char('r') => self.restart_container(),
             KeyCode::Char('s') => self.stop_container(),
             KeyCode::Char('x') => self.kill_container(),
@@ -117,27 +128,28 @@ impl App {
     }
 
     fn restart_container(&mut self) {
-        let container_id = self.containers_table.get_current_container_id();
-        self.selected_container_id = container_id;
+        self.update_selected_container_id();
         self.next_operation = NextOperation::Restart;
     }
 
     fn stop_container(&mut self) {
-        let container_id = self.containers_table.get_current_container_id();
-        self.selected_container_id = container_id;
+        self.update_selected_container_id();
         self.next_operation = NextOperation::Stop;
     }
 
     fn kill_container(&mut self) {
-        let container_id = self.containers_table.get_current_container_id();
-        self.selected_container_id = container_id;
+        self.update_selected_container_id();
         self.next_operation = NextOperation::Kill;
     }
 
     fn remove_container(&mut self) {
+        self.update_selected_container_id();
+        self.next_operation = NextOperation::Remove;
+    }
+
+    fn update_selected_container_id(&mut self) {
         let container_id = self.containers_table.get_current_container_id();
         self.selected_container_id = container_id;
-        self.next_operation = NextOperation::Remove;
     }
 }
 
