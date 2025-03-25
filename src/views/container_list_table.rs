@@ -1,21 +1,18 @@
-use color_eyre::{owo_colors::OwoColorize, Result};
-use crossterm::event::KeyModifiers;
 use ratatui::{
-    crossterm::event::{self, Event, KeyCode, KeyEventKind},
-    layout::{Constraint, Layout, Margin, Rect},
+    layout::{Constraint, Layout, Rect},
     style::{self, Color, Modifier, Style, Stylize},
     text::Text,
     widgets::{
-        Block, BorderType, Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, Table, TableState,
+        Block, BorderType, Cell, HighlightSpacing, 
+        Paragraph, Row, Table, TableState,
     },
-    DefaultTerminal, Frame,
+    Frame,
 };
 use style::palette::tailwind;
 
 const INFO_TEXT: [&str; 2] = [
-    "(Q) Quit | (Ent) details | (T) show all | (H|Esc) back",
-    "(J) down | (K) up | (R) restart | (S) stop | (X) Kill", 
+    "<Q> quit       | <J> down    | <K> up    | <T> view mode | <H/Esc> back",
+    "<Ent> details  | <R> restart | <S> stop  | <X> kill      | <D/Del> remove", 
 ];
 
 struct TableColors {
@@ -146,8 +143,8 @@ impl ContainersTable {
             rows,
             vec![
                 Constraint::Percentage(15),
-                Constraint::Percentage(25),
-                Constraint::Percentage(20),
+                Constraint::Percentage(15),
+                Constraint::Percentage(30),
                 Constraint::Percentage(10),
                 Constraint::Percentage(20),
             ],
@@ -176,9 +173,18 @@ impl ContainersTable {
 
         let footer = Paragraph::new(Text::from_iter(INFO_TEXT))
             .style(footer_style)
-            .centered()
+            .left_aligned()
             .block(block);
         
         frame.render_widget(footer, area);
+    }
+
+    pub fn get_current_container_id(&self) -> String {
+        if let Some(index) = self.state.selected() {
+            let container = self.items.get(index).unwrap();
+            return container.id.clone();
+        }
+
+        "-1".to_string()
     }
 }

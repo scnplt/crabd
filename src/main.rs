@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
     let docker = DockerClient::new()?;
     let containers = Arc::new(Mutex::new(docker.list_containers().await.unwrap()));
-    let mut app = App::new(containers).await;
+    let mut app = App::new(docker.clone(), containers).await;
     let (tx, mut rx) = mpsc::channel(32);
 
     tokio::spawn(async move {

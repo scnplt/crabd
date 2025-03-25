@@ -1,5 +1,5 @@
 use bollard::Docker;
-use bollard::container::{ListContainersOptions, StopContainerOptions, RestartContainerOptions, KillContainerOptions, StartContainerOptions};
+use bollard::container::{KillContainerOptions, ListContainersOptions, RemoveContainerOptions, RestartContainerOptions, StopContainerOptions};
 use bollard::models::ContainerSummary;
 
 #[derive(Clone)]
@@ -19,11 +19,6 @@ impl DockerClient {
         })).await?)
     }
 
-    pub async fn start_container(&self, container_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.client.start_container(container_id, None::<StartContainerOptions<String>>).await?;
-        Ok(())
-    }
-
     pub async fn stop_container(&self, container_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.client.stop_container(container_id, None::<StopContainerOptions>).await?;
         Ok(())
@@ -37,5 +32,12 @@ impl DockerClient {
     pub async fn kill_container(&self, container_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.client.kill_container(container_id, None::<KillContainerOptions<String>>).await?;
         Ok(())
+    }
+
+    pub async fn remove_container(&self, container_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Ok(self.client.remove_container(container_id, Some(RemoveContainerOptions {
+            force: true,
+            ..Default::default()
+        })).await?)
     }
 }
