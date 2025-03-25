@@ -29,10 +29,7 @@ impl App {
 
     pub async fn new(containers: Arc<Mutex<Vec<ContainerSummary>>>) -> Self {
         let show_all = false;
-        let containers_data: Vec<ContainerData> = get_filtered_containers(containers.lock().unwrap().to_vec(), show_all)
-            .iter()
-            .map(map_to_container_data)
-            .collect();
+        let containers_data: Vec<ContainerData> = map_to_container_data(containers.lock().unwrap().to_vec(),show_all);
 
         Self {
             current_screen: CurrentScreen::List,
@@ -45,80 +42,17 @@ impl App {
     pub async fn run(&mut self, terminal: &mut DefaultTerminal, rx: &mut Receiver<Vec<ContainerSummary>>) -> io::Result<()> {
         while !self.should_exit {
             terminal.draw(|frame| self.containers_table.draw(frame))?;
-            self.handle_events()?;
-        }
-
-        /* while !self.should_exit {
-            terminal.draw(|frame| self.draw(frame))?;
 
             if let Ok(result) = rx.try_recv() {
-                let updated_container_list = get_filtered_containers(result, self.show_all);
-                let new_last_index = updated_container_list.len() - 1;
-                
-                if self.selected_index > new_last_index {
-                    self.selected_index = new_last_index;
-                }
-
-                self.containers = updated_container_list;
+                let updated_container_list: Vec<ContainerData> = map_to_container_data(result, self.show_all);
+                self.containers_table.items = updated_container_list;
             }
+
             self.handle_events()?;
-        } */
+        }
+
         Ok(())
     }
-
-    /* fn draw(&self, frame: &mut Frame) {
-        let title = Line::from(self.get_title().bold());
-        let block = Block::bordered()
-            .title(title.left_aligned())
-            .title_bottom(self.get_first_bottom_line().left_aligned())
-            .title_bottom(self.get_second_bottom_line().right_aligned())
-            .border_set(border::THICK);
-        
-        render_container_list(frame, &self.containers, self.selected_index);
-        frame.render_widget(block, frame.area()); 
-    }*/
-
-    /* fn get_title(&self) -> &str {
-        match self.current_screen {
-            CurrentScreen::List => "Containers ",
-            CurrentScreen::Info => "Details ",
-        }
-    } */
-
-    /* fn get_first_bottom_line(&self) -> Line<'_> {
-        if let CurrentScreen::Info { .. } = self.current_screen {
-            return Line::from(vec![
-                " Back: ".into(),
-                "<H> ".blue().bold(),
-            ]);
-        }
-
-        let mut values = vec![
-            " Details: ".into(),
-            "<Ent>".blue().bold(),
-            " Show All: ".into(),
-            "<T> ".blue().bold(),
-        ];
-
-        if self.show_all {
-            values[2] = " Running: ".into();
-        }
-
-        Line::from(values)
-    } */
-
-    /* fn get_second_bottom_line(&self) -> Line<'_> {
-        let values = vec![
-            " Restart: ".into(),
-            "<R>".green().bold(),
-            " Stop: ".into(),
-            "<S>".red().bold(),
-            " Kill: ".into(),
-            "<X> ".red().bold(),
-        ];
-
-        Line::from(values)
-    } */
 
     fn handle_events(&mut self) -> io::Result<()> {
         if crossterm::event::poll(Duration::from_millis(50))? {
@@ -154,30 +88,50 @@ impl App {
     }
 }
 
-fn get_filtered_containers(containers: Vec<ContainerSummary>, show_all: bool) -> Vec<ContainerSummary> {
+fn get_filtered_containers(containers: Vec<ContainerData>, show_all: bool) -> Vec<ContainerData> {
     if show_all { return containers; }
 
-    containers.iter()
-        .filter(|container| container.state.as_deref() != Some("exited"))
-        .cloned()
+    containers.into_iter()
+        .filter(|container| !String::eq(&container.state, &"exited".to_string()))
         .collect()
 }
 
-fn map_to_container_data(container: &ContainerSummary) -> ContainerData {
-    let mut name = "NaN".to_string();
-    if let Some(n) = container.names.as_deref().unwrap().first() {
-        if let Some(stripped) = n.strip_prefix('/') {
-            name = stripped.to_string()
-        }
-    }
+fn map_to_container_data(containers: Vec<ContainerSummary>, show_all: bool) -> Vec<ContainerData> {
+    let mut result_list = containers.iter()
+        .filter(|container| {
+            let state = container.state.as_deref().unwrap_or("-").to_string();
+            if show_all { true } else { String::eq(&state, "running") }
+        })
+        .map(|container| {
+            let mut name = "NaN".to_string();
+            if let Some(n) = container.names.as_deref().unwrap().first() {
+                if let Some(stripped) = n.strip_prefix('/') {
+                    name = stripped.to_string()
+                }
+            }
+        
+            ContainerData {
+                id: container.id.as_deref().unwrap_or("-").to_string(),
+                name,
+                image: container.image.as_deref().unwrap_or("-").to_string(),
+                state: container.state.as_deref().unwrap_or("-").to_string(),
+                ports: container.ports.as_ref().map_or("-".to_string(), get_ports_text),
+            }
+        })
+        .collect::<Vec<ContainerData>>();
     
-    ContainerData {
-        id: container.id.as_deref().unwrap_or("-").to_string(),
-        name,
-        image: container.image.as_deref().unwrap_or("-").to_string(),
-        state: container.state.as_deref().unwrap_or("-").to_string(),
-        ports: container.ports.as_ref().map_or("-".to_string(), get_ports_text),
-    }
+    result_list.sort_by(|p, n| {
+            let p_is_running = p.state.starts_with("r");
+            let n_is_running = n.state.starts_with("r");
+
+            match (p_is_running, n_is_running) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => p.state.cmp(&n.state),
+            }
+    });
+    
+    result_list
 }
 
 fn get_ports_text(ports: &Vec<Port>) -> String {

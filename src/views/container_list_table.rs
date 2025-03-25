@@ -60,7 +60,7 @@ impl ContainerData {
 
 pub struct ContainersTable {
     state: TableState,
-    items: Vec<ContainerData>,
+    pub items: Vec<ContainerData>,
     colors: TableColors
 }
 
