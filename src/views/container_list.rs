@@ -1,83 +1,36 @@
-use bollard::models::ContainerSummary;
+use bollard::{models::ContainerSummary, secret::Port};
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout},
+    layout::Constraint,
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Row, Table},
 };
 
 pub fn render_container_list(
     frame: &mut Frame,
     containers: &[ContainerSummary],
     selected_index: usize,
-    show_all: bool,
 ) {
     let size = frame.area();
 
-    let filtered_containers: Vec<ContainerSummary>;
-    let mut m_containers: &[ContainerSummary] = containers;
-
-    if !show_all {
-        filtered_containers = containers.iter()
-            .filter(|container| container.state.as_deref() != Some("exited"))
-            .cloned()
-            .collect();
-        m_containers = &filtered_containers;
-    }
-
-    /* let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(90),
-            Constraint::Percentage(10),
-        ].as_ref())
-        .split(size);
-
-    let table_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(100),
-        ].as_ref())
-        .split(chunks[0]); */
-
-    let header = Row::new(vec!["ID", "Name", "Image Name", "Status", "Ports"]).style(
+    let header = Row::new(vec!["ID", "Name", "Image", "State", "Ports"]).style(
         Style::default()
-            .fg(Color::Yellow)
+            .fg(Color::Black)
+            .bg(Color::Gray)
             .add_modifier(Modifier::BOLD),
     );
 
-    /* let header = Row::new(vec![
-        Cell::from("ID"),
-        Cell::from("Name"),
-        Cell::from("Image Name"),
-        Cell::from("Uptime"),
-        Cell::from("Ports"),
-    ]).style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)); */
-
-    let rows: Vec<Row> = m_containers
+    let rows: Vec<Row> = containers
         .iter()
         .enumerate()
         .map(|(index, container)| {
             let mut style = Style::default();
+
             if index == selected_index {
                 style = style.bg(Color::Blue);
             }
 
-            let ports_text = container.ports.as_ref().map_or("-".to_string(), |ports| {
-                let mut unique_ports: Vec<(u16, u16)> = ports
-                    .iter()
-                    .filter(|p| p.public_port.is_some())
-                    .map(|p| (p.private_port, p.public_port.unwrap()))
-                    .collect();
-                unique_ports.sort_by_key(|&(private, _)| private);
-                unique_ports.dedup();
-
-                unique_ports
-                    .iter()
-                    .map(|&(private, public)| format!("{}:{}/tcp", private, public))
-                    .collect::<Vec<String>>()
-                    .join("\n")
-            });
+            let ports_text = container.ports.as_ref().map_or("-".to_string(), get_ports_text);
 
             let port_counts = ports_text.lines().count() as u16;
             let row_height = if port_counts > 0 { port_counts } else { 1 };
@@ -112,4 +65,19 @@ pub fn render_container_list(
     );
 
     frame.render_widget(table, size);
+}
+
+fn get_ports_text(ports: &Vec<Port>) -> String {
+    let mut filtered_ports: Vec<(u16, u16)> = ports.iter()
+        .filter(|p| p.public_port.is_some())
+        .map(|p| (p.private_port, p.public_port.unwrap()))
+        .collect();
+
+    filtered_ports.sort_by_key(|&(private, _)| private);
+    filtered_ports.dedup();
+    
+    filtered_ports.iter()
+        .map(|&(private, public)| format!("{}:{}", private, public))
+        .collect::<Vec<String>>()
+        .join("\n")
 }
