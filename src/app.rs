@@ -1,21 +1,22 @@
-use crate::views::container_list_table::{ContainersTable, ContainerData};
+use crate::{docker::client::DockerClient, views::container_list_table::{ContainerData, ContainersTable}};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use tokio::sync::mpsc::Receiver;
 use std::{io, sync::{Arc, Mutex}, time::Duration};
 use bollard::secret::{ContainerSummary, Port, PortTypeEnum};
-use ratatui::{
-    style::Stylize, 
-    symbols::border, 
-    text::Line, 
-    widgets::Block, 
-    DefaultTerminal, 
-    Frame
-};
+use ratatui::DefaultTerminal;
  
 pub enum CurrentScreen {
     List,
     Info,
+}
+
+enum NextOperation {
+    None,
+    Restart,
+    Stop,
+    Kill,
+    Remove,
 }
 
 pub struct App {
@@ -23,19 +24,30 @@ pub struct App {
     pub should_exit: bool,
     pub show_all: bool,
     containers_table: ContainersTable,
+    docker: DockerClient,
+    next_operation: NextOperation,
+    selected_container_id: String,
 }
 
 impl App {
 
-    pub async fn new(containers: Arc<Mutex<Vec<ContainerSummary>>>) -> Self {
+    pub async fn new(client: DockerClient, containers: Arc<Mutex<Vec<ContainerSummary>>>) -> Self {
         let show_all = false;
         let containers_data: Vec<ContainerData> = map_to_container_data(containers.lock().unwrap().to_vec(),show_all);
+        let mut first_container_id = "-1".to_string();
+
+        if let Some(container) = containers_data.first() {
+            first_container_id = container.id.clone()
+        }
 
         Self {
             current_screen: CurrentScreen::List,
             should_exit: false,
             show_all,
-            containers_table: ContainersTable::new(containers_data)
+            containers_table: ContainersTable::new(containers_data),
+            docker: client,
+            next_operation: NextOperation::None,
+            selected_container_id: first_container_id
         }
     }
 
@@ -48,10 +60,23 @@ impl App {
                 self.containers_table.items = updated_container_list;
             }
 
+            self.handle_container_operations().await;
             self.handle_events()?;
         }
 
         Ok(())
+    }
+
+    async fn handle_container_operations(&mut self) {
+        let result: Result<_, _> = match self.next_operation {
+            NextOperation::Restart => self.docker.restart_container(&self.selected_container_id).await,
+            NextOperation::Stop => self.docker.stop_container(&self.selected_container_id).await,
+            NextOperation::Kill => self.docker.kill_container(&self.selected_container_id).await,
+            NextOperation::Remove => self.docker.remove_container(&self.selected_container_id).await,
+            _ => Err("Pass".into())
+        };
+        
+        if result.is_ok() { self.next_operation = NextOperation::None; }
     }
 
     fn handle_events(&mut self) -> io::Result<()> {
@@ -70,6 +95,10 @@ impl App {
             KeyCode::Char('q') | KeyCode::Esc => self.should_exit = true,
             KeyCode::Char('t') => self.show_all = !self.show_all,
             KeyCode::Char('h') => self.go_to_list_screen(),
+            KeyCode::Char('r') => self.restart_container(),
+            KeyCode::Char('s') => self.stop_container(),
+            KeyCode::Char('x') => self.kill_container(),
+            KeyCode::Char('d') | KeyCode::Delete => self.remove_container(),
             KeyCode::Enter => self.go_to_info_screen(),
             _ => {}
         }
@@ -86,14 +115,30 @@ impl App {
             self.current_screen = CurrentScreen::Info;
         }
     }
-}
 
-fn get_filtered_containers(containers: Vec<ContainerData>, show_all: bool) -> Vec<ContainerData> {
-    if show_all { return containers; }
+    fn restart_container(&mut self) {
+        let container_id = self.containers_table.get_current_container_id();
+        self.selected_container_id = container_id;
+        self.next_operation = NextOperation::Restart;
+    }
 
-    containers.into_iter()
-        .filter(|container| !String::eq(&container.state, &"exited".to_string()))
-        .collect()
+    fn stop_container(&mut self) {
+        let container_id = self.containers_table.get_current_container_id();
+        self.selected_container_id = container_id;
+        self.next_operation = NextOperation::Stop;
+    }
+
+    fn kill_container(&mut self) {
+        let container_id = self.containers_table.get_current_container_id();
+        self.selected_container_id = container_id;
+        self.next_operation = NextOperation::Kill;
+    }
+
+    fn remove_container(&mut self) {
+        let container_id = self.containers_table.get_current_container_id();
+        self.selected_container_id = container_id;
+        self.next_operation = NextOperation::Remove;
+    }
 }
 
 fn map_to_container_data(containers: Vec<ContainerSummary>, show_all: bool) -> Vec<ContainerData> {
@@ -115,7 +160,7 @@ fn map_to_container_data(containers: Vec<ContainerSummary>, show_all: bool) -> V
                 name,
                 image: container.image.as_deref().unwrap_or("-").to_string(),
                 state: container.state.as_deref().unwrap_or("-").to_string(),
-                ports: container.ports.as_ref().map_or("-".to_string(), get_ports_text),
+                ports: container.ports.as_ref().map_or("-".to_string(), |p| get_ports_text(p)),
             }
         })
         .collect::<Vec<ContainerData>>();
@@ -134,7 +179,7 @@ fn map_to_container_data(containers: Vec<ContainerSummary>, show_all: bool) -> V
     result_list
 }
 
-fn get_ports_text(ports: &Vec<Port>) -> String {
+fn get_ports_text(ports: &[Port]) -> String {
     let mut filtered_ports: Vec<(u16, u16, PortTypeEnum)> = ports.iter()
         .filter(|p| p.public_port.is_some())
         .map(|p| (p.private_port, p.public_port.unwrap(), p.typ.unwrap()))
