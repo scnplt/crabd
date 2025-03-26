@@ -1,5 +1,16 @@
-use ratatui::{buffer::Buffer, layout::Rect, style::{Color, Style, Styled, Stylize}, text::{Line, Span, Text}, widgets::{Block, Paragraph, ScrollbarState, Widget, Wrap}, Frame};
+use crossterm::event::KeyCode;
+use strum::IntoEnumIterator;
+use strum_macros::{Display, EnumIter, FromRepr};
+use ratatui::{
+    buffer::Buffer, 
+    layout::{Constraint, Layout, Rect}, 
+    style::{palette::tailwind, Color, Style, Stylize}, 
+    text::{Line, Text}, 
+    widgets::{Block, BorderType, Paragraph, Tabs, Widget}, 
+    Frame
+};
 
+#[derive(Default)]
 pub struct ContainerInfoData {
     pub id: String,
     pub name: String,
@@ -9,63 +20,130 @@ pub struct ContainerInfoData {
     pub mounts: String,
 }
 
+#[derive(Default, Clone, Copy, Display, FromRepr, EnumIter)]
+enum SelectedTab {
+    #[default]
+    #[strum(to_string = "Status")]
+    Status,
+    #[strum(to_string = "Details")]
+    Details,
+    #[strum(to_string = "Volumes")]
+    Volumes,
+    #[strum(to_string = "Network")]
+    Network,
+}
+
+impl SelectedTab {
+
+    fn title(self) -> Line<'static> {
+        format!("  {self}  ")
+            .fg(tailwind::SLATE.c200)
+            .bg(tailwind::BLUE.c900)
+            .into()
+    }
+    
+    fn previous(self) -> Self {
+        let current_index = self as usize;
+        let previouse_index = current_index.saturating_sub(1);
+        Self::from_repr(previouse_index).unwrap_or(self)
+    }
+
+    fn next(self) -> Self {
+        let current_index = self as usize;
+        let next_index = current_index.saturating_add(1);
+        Self::from_repr(next_index).unwrap_or(self)
+    }
+
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        match self {
+            Self::Status => self.render_status_tab(area, buf),
+            Self::Details => self.render_details_tab(area, buf),
+            Self::Volumes => self.render_volumes_tab(area, buf),
+            Self::Network => self.render_network_tab(area, buf),
+        }
+    }
+
+    fn render_status_tab(self, area: Rect, buf: &mut Buffer) {
+        // TODO
+    }
+
+    fn render_details_tab(self, area: Rect, buf: &mut Buffer) {
+        // TODO
+    }
+
+    fn render_volumes_tab(self, area: Rect, buf: &mut Buffer) {
+        // TODO
+    }
+
+    fn render_network_tab(self, area: Rect, buf: &mut Buffer) {
+        // TODO
+    }
+}
+
+#[derive(Default)]
 pub struct ContainerInfo {
-    data: ContainerInfoData,
+    pub data: ContainerInfoData,
+    selected_tab: SelectedTab
 }
 
 impl ContainerInfo {
     
-    pub fn new(data: ContainerInfoData) -> Self {
-        Self {
-            data,        
-        }
+    pub fn draw(&mut self, frame: &mut Frame) {
+        let vertical = Layout::vertical([Constraint::Length(1), Constraint::Min(0), Constraint::Length(3)]);
+        let [header_area, inner_area, footer_area] = vertical.areas(frame.area());
+
+        let horizontal = Layout::horizontal([Constraint::Min(0), Constraint::Length(22)]);
+        let [tabs_area, title_area] = horizontal.areas(header_area);
+
+        let buf = frame.buffer_mut();
+
+        render_title(title_area, buf);
+        render_tabs(self.selected_tab, tabs_area, buf);
+        self.selected_tab.render(inner_area, buf);
+        render_footer(footer_area, buf);
     }
 
-    pub fn render(&mut self, frame: &mut Frame, area: Rect) {
-        let title = self.data.name.clone()
-            .light_blue()
-            .bold();
-
-        let block = Block::bordered()
-            .gray()
-            .title(title);
-
-        let content = Paragraph::new(self.get_lines())
-            .block(block)
-            .left_aligned()
-            .wrap(Wrap { trim: true });
-
-        frame.render_widget(content, area);
-    }
-
-    fn get_lines(&self) -> Vec<Line> {
-        let key_style = Style::new().light_blue().bold();
-
-        let mut lines = [
-            ("ID: ", self.data.id.clone()),
-            ("Image: ", self.data.image.clone()),
-            ("Created: ", self.data.created.clone()),
-            ("State: ", self.data.state.clone()),
-            //("Mounts: ", self.data.mounts.clone())
-
-        ].into_iter().map(|(key, content)| {
-            Line::from_iter([
-                key.set_style(key_style),
-                content.into()
-            ])
-        })
-        .collect::<Vec<Line>>();
-
-        lines.push(Line::from(""));
-        lines.push(Line::from("Mounts: ".set_style(key_style)));
-
-        let mut mounts_line = self.data.mounts
-            .split("\n")
-            .map(Line::raw)
-            .collect::<Vec<Line>>();
-        
-        lines.append(&mut mounts_line);
-
-        lines
+    pub fn handle_key_event(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Right | KeyCode::Char('l') => self.selected_tab = self.selected_tab.next(),
+            KeyCode::Left | KeyCode::Char('h') => self.selected_tab = self.selected_tab.previous(),
+            _ => {}
+        };
     }
 }
+
+fn render_title(area: Rect, buf: &mut Buffer) {
+    "Container Informations".bold().render(area, buf);
+}
+
+fn render_tabs(selected_tab: SelectedTab, area: Rect, buf: &mut Buffer) {
+    let titles = SelectedTab::iter().map(SelectedTab::title);
+    let highlight_style = (Color::default(), tailwind::RED.c700);
+    let selected_tab_index = selected_tab as usize;
+    Tabs::new(titles)
+        .highlight_style(highlight_style)
+        .select(selected_tab_index)
+        .padding("", "")
+        .divider(" ")
+        .render(area, buf);
+}
+
+fn render_footer(area: Rect, buf: &mut Buffer) {
+    let footer_style = Style::new()
+        .fg(tailwind::SLATE.c200)
+        .bg(tailwind::SLATE.c950);
+
+    let border_style = Style::new().fg(tailwind::BLUE.c400);
+
+    let block = Block::bordered()
+        .border_type(BorderType::Double)
+        .border_style(border_style);
+
+    let footer = Paragraph::new(Text::from("<Q/Esc> back"))
+        .style(footer_style)
+        .left_aligned()
+        .block(block);
+
+    footer.render(area, buf);
+}
+
