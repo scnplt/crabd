@@ -1,10 +1,10 @@
-use crate::{docker::client::DockerClient, views::container_list_table::{ContainerData, ContainersTable}};
+use crate::{docker::client::DockerClient, views::{container_info::{ContainerInfo, ContainerInfoData}, container_list_table::{ContainerData, ContainersTable}}};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use tokio::sync::mpsc::Receiver;
 use std::{io, sync::{Arc, Mutex}, time::Duration};
-use bollard::secret::{ContainerSummary, Port, PortTypeEnum};
-use ratatui::{DefaultTerminal, text::Text, widgets::Paragraph};
+use bollard::secret::{ContainerConfig, ContainerInspectResponse, ContainerState, ContainerStateStatusEnum, ContainerSummary, MountPoint, MountPointTypeEnum, Port, PortTypeEnum};
+use ratatui::{text::Text, widgets::{Paragraph, Wrap}, DefaultTerminal};
  
 pub enum CurrentScreen {
     List,
@@ -74,8 +74,24 @@ impl App {
     }
 
     async fn draw_container_info(&mut self, terminal: &mut DefaultTerminal) {
-        let placeholder = Paragraph::new(Text::from("Lorem Ipsum")).centered();
-        terminal.draw(|frame| frame.render_widget(placeholder, frame.area())).unwrap();
+        self.update_selected_container_id();
+        let data = self.docker.inspect_container(&self.selected_container_id).await;
+
+        if let Ok(info) = data {
+            let mut container_info = ContainerInfo::new(map_to_container_info_data(info));
+            terminal.draw(|frame| container_info.render(frame, frame.area())).unwrap();
+        }
+
+        
+        /* let info = if let Ok(info) = data {
+               format!("{:?}", info)
+        } else {
+            "Lorem Ipsum".to_string()
+        };
+
+
+        let placeholder = Paragraph::new(Text::from(info)).left_aligned().wrap(Wrap { trim: true});
+        terminal.draw(|frame| frame.render_widget(placeholder, frame.area())).unwrap(); */
     }
 
     async fn handle_container_operations(&mut self) {
@@ -204,4 +220,50 @@ fn get_ports_text(ports: &[Port]) -> String {
         .map(|&(private, public, typ)| format!("{}:{}/{}", private, public, typ))
         .collect::<Vec<String>>()
         .join("\n")
+}
+
+fn map_to_container_info_data(container: ContainerInspectResponse) -> ContainerInfoData {
+    let mut name = "NaN".to_string();
+    if let Some(n) = container.name.as_deref() {
+        if let Some(stripped) = n.strip_prefix('/') {
+            name = stripped.to_string()
+        }
+    }
+
+    let state = container.state.as_ref().unwrap_or(&ContainerState::default())
+        .status.unwrap_or(ContainerStateStatusEnum::EMPTY).to_string();
+
+    let mounts = container.mounts.as_ref().map_or("-".to_string(), |points| {
+        let mut mp = points.iter()
+            .map(|mp| {
+                let source = match mp.typ {
+                    Some(MountPointTypeEnum::VOLUME { .. }) => mp.name.clone().unwrap_or("-".to_string()),
+                    Some(_) => mp.source.clone().unwrap_or("-".to_string()),
+                    None => "-".to_string(),
+                };
+
+                let destination = mp.destination.clone().unwrap_or("-".to_string());
+                format!("{} -> {}", source, destination)
+            })
+            .collect::<Vec<String>>();
+        
+        mp.sort_by_key(|v| v.clone());
+
+        mp.join("\n")
+    });
+
+    let image = if let Some(config) = container.config {
+        config.image.unwrap_or("-".to_string())
+    } else {
+        "-".to_string()
+    };
+
+    ContainerInfoData {
+        id: container.id.as_deref().unwrap_or("-").to_string(),
+        name,
+        image,
+        created: container.created.as_deref().unwrap_or("-").to_string(),
+        state,
+        mounts,
+    }
 }

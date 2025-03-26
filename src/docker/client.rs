@@ -1,5 +1,6 @@
+use bollard::secret::ContainerInspectResponse;
 use bollard::Docker;
-use bollard::container::{KillContainerOptions, ListContainersOptions, RemoveContainerOptions, RestartContainerOptions, StopContainerOptions};
+use bollard::container::{InspectContainerOptions, KillContainerOptions, ListContainersOptions, RemoveContainerOptions, RestartContainerOptions, StopContainerOptions};
 use bollard::models::ContainerSummary;
 
 #[derive(Clone)]
@@ -35,9 +36,14 @@ impl DockerClient {
     }
 
     pub async fn remove_container(&self, container_id: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        Ok(self.client.remove_container(container_id, Some(RemoveContainerOptions {
+        self.client.remove_container(container_id, Some(RemoveContainerOptions {
             force: true,
             ..Default::default()
-        })).await?)
+        })).await?;
+        Ok(())
+    }
+
+    pub async fn inspect_container(&self, container_id: &str) -> Result<ContainerInspectResponse, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(self.client.inspect_container(container_id, None::<InspectContainerOptions>).await?)
     }
 }
