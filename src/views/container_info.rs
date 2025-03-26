@@ -93,18 +93,13 @@ pub struct ContainerInfo {
 impl ContainerInfo {
     
     pub fn draw(&mut self, frame: &mut Frame) {
-        let size = frame.area();
         let vertical = Layout::vertical([Constraint::Length(1), Constraint::Min(0), Constraint::Length(3)]);
-        let [header_area, inner_area, footer_area] = vertical.areas(size);
+        let [header_area, inner_area, footer_area] = vertical.areas(frame.area());
 
-        let horizontal = Layout::horizontal([Constraint::Min(23), Constraint::Min(0)]);
-        let [title_area, tabs_area] = horizontal.areas(header_area);
+        let horizontal = Layout::horizontal([Constraint::Min(0), Constraint::Length(23)]);
+        let [tabs_area, title_area] = horizontal.areas(header_area);
 
         let buf = frame.buffer_mut();
-
-        Block::new()
-            .bg(tailwind::SLATE.c950)
-            .render(size, buf);
 
         render_title(title_area, buf);
         render_tabs(self.selected_tab, tabs_area, buf);
@@ -143,14 +138,11 @@ fn render_tabs(selected_tab: SelectedTab, area: Rect, buf: &mut Buffer) {
 }
 
 fn render_footer(area: Rect, buf: &mut Buffer) {
-    let footer_style = Style::new()
-        .fg(tailwind::SLATE.c200)
-        .bg(tailwind::SLATE.c950);
-
+    let footer_style = Style::new().fg(tailwind::SLATE.c200);
     let border_style = Style::new().fg(tailwind::BLUE.c400);
 
     let block = Block::bordered()
-        .border_type(BorderType::Double)
+        .border_type(BorderType::Plain)
         .border_style(border_style);
 
     let footer = Paragraph::new(Text::from("<Q/Esc> back"))
