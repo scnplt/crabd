@@ -1,10 +1,14 @@
-use crate::{docker::client::DockerClient, views::{container_info::{ContainerInfo, ContainerInfoData}, container_list_table::{ContainerData, ContainersTable}}};
+use crate::{
+    docker::client::DockerClient, 
+    views::{container_info::{ContainerInfo, ContainerInfoData}, 
+    container_list_table::{ContainerData, ContainersTable}}
+};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use tokio::sync::mpsc::Receiver;
 use std::{io, sync::{Arc, Mutex}, time::Duration};
-use bollard::secret::{ContainerConfig, ContainerInspectResponse, ContainerState, ContainerStateStatusEnum, ContainerSummary, MountPoint, MountPointTypeEnum, Port, PortTypeEnum};
-use ratatui::{text::Text, widgets::{Paragraph, Wrap}, DefaultTerminal};
+use bollard::secret::{ContainerInspectResponse, ContainerState, ContainerStateStatusEnum, ContainerSummary, MountPointTypeEnum, Port, PortTypeEnum};
+use ratatui::DefaultTerminal;
  
 pub enum CurrentScreen {
     List,
@@ -24,6 +28,7 @@ pub struct App {
     pub should_exit: bool,
     pub show_all: bool,
     containers_table: ContainersTable,
+    container_info: ContainerInfo,
     docker: DockerClient,
     next_operation: NextOperation,
     selected_container_id: String,
@@ -45,6 +50,7 @@ impl App {
             should_exit: false,
             show_all,
             containers_table: ContainersTable::new(containers_data),
+            container_info: ContainerInfo::default(),
             docker: client,
             next_operation: NextOperation::None,
             selected_container_id: first_container_id
@@ -78,20 +84,9 @@ impl App {
         let data = self.docker.inspect_container(&self.selected_container_id).await;
 
         if let Ok(info) = data {
-            let mut container_info = ContainerInfo::new(map_to_container_info_data(info));
-            terminal.draw(|frame| container_info.render(frame, frame.area())).unwrap();
+            self.container_info.data = map_to_container_info_data(info);
+            terminal.draw(|frame| self.container_info.draw(frame)).unwrap();
         }
-
-        
-        /* let info = if let Ok(info) = data {
-               format!("{:?}", info)
-        } else {
-            "Lorem Ipsum".to_string()
-        };
-
-
-        let placeholder = Paragraph::new(Text::from(info)).left_aligned().wrap(Wrap { trim: true});
-        terminal.draw(|frame| frame.render_widget(placeholder, frame.area())).unwrap(); */
     }
 
     async fn handle_container_operations(&mut self) {
@@ -116,30 +111,32 @@ impl App {
     }
 
     fn handle_key_event(&mut self, code: KeyCode) {
+        match self.current_screen {
+            CurrentScreen::Info => self.container_info.handle_key_event(code),
+            CurrentScreen::List => self.containers_table.handle_key_event(code),
+        }
         match code {
-            KeyCode::Char('j') | KeyCode::Down => self.containers_table.next_row(),
-            KeyCode::Char('k') | KeyCode::Up => self.containers_table.previous_row(),
-            KeyCode::Char('q') | KeyCode::Esc => self.should_exit = true,
+            KeyCode::Esc | KeyCode::Char('q') => self.back(),
+            KeyCode::Enter => self.go_to_info_screen(),
             KeyCode::Char('t') => self.show_all = !self.show_all,
-            KeyCode::Char('h') | KeyCode::Char('b') => self.go_to_list_screen(),
             KeyCode::Char('r') => self.restart_container(),
             KeyCode::Char('s') => self.stop_container(),
             KeyCode::Char('x') => self.kill_container(),
-            KeyCode::Char('d') | KeyCode::Delete => self.remove_container(),
-            KeyCode::Enter => self.go_to_info_screen(),
+            KeyCode::Delete | KeyCode::Char('d') => self.remove_container(),
             _ => {}
         }
     }
 
-    fn go_to_list_screen(&mut self) {
-        if let CurrentScreen::Info { .. } = self.current_screen {
-            self.current_screen = CurrentScreen::List;
+    fn back(&mut self) {
+        match self.current_screen {
+            CurrentScreen::Info => self.current_screen = CurrentScreen::List,
+            CurrentScreen::List => self.should_exit = true
         }
     }
 
     fn go_to_info_screen(&mut self) {
-        if let CurrentScreen::List { .. } = self.current_screen {
-            self.current_screen = CurrentScreen::Info;
+        if let CurrentScreen::List = self.current_screen { 
+            self.current_screen = CurrentScreen::Info 
         }
     }
 

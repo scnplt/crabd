@@ -1,3 +1,5 @@
+use crossterm::event::KeyCode;
+use style::palette::tailwind;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{self, Color, Modifier, Style, Stylize},
@@ -8,10 +10,9 @@ use ratatui::{
     },
     Frame,
 };
-use style::palette::tailwind;
 
 const INFO_TEXT: [&str; 2] = [
-    "<Q/Esc> quit    | <J> down    | <K> up   | <T> view mode | <H/B>   back",
+    "<Q/Esc> quit    | <J> down    | <K> up   | <T> view mode |",
     "<Ent>   details | <R> restart | <S> stop | <X> kill      | <D/Del> remove", 
 ];
 
@@ -68,34 +69,6 @@ impl ContainersTable {
             items,
             colors: TableColors::new()
         }
-    }
-
-    pub fn next_row(&mut self) {
-        let index = match self.state.selected() {
-            Some(i) => {
-                if i >= self.items.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
-            None => 0,
-        };
-        self.state.select(Some(index));
-    }
-
-    pub fn previous_row(&mut self) {
-        let index = match self.state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.items.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
-        self.state.select(Some(index));
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
@@ -186,5 +159,41 @@ impl ContainersTable {
         }
 
         "-1".to_string()
+    }
+
+    pub fn handle_key_event(&mut self, code: KeyCode) {
+        match code {
+            KeyCode::Char('j') | KeyCode::Down => self.next_row(),
+            KeyCode::Char('k') | KeyCode::Up => self.previous_row(),
+            _ => {}
+        }
+    }
+
+    fn next_row(&mut self) {
+        let index = match self.state.selected() {
+            Some(i) => {
+                if i >= self.items.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.state.select(Some(index));
+    }
+
+    fn previous_row(&mut self) {
+        let index = match self.state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    self.items.len() - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.state.select(Some(index));
     }
 }
