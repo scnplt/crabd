@@ -37,7 +37,7 @@ pub struct App {
 impl App {
 
     pub async fn new(client: DockerClient, containers: Arc<Mutex<Vec<ContainerSummary>>>) -> Self {
-        let show_all = false;
+        let show_all = true;
         let containers_data: Vec<ContainerData> = map_to_container_data(containers.lock().unwrap().to_vec(),show_all);
         let mut first_container_id = "-1".to_string();
 
