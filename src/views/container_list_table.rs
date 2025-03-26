@@ -11,32 +11,19 @@ use ratatui::{
     Frame,
 };
 
-const INFO_TEXT: [&str; 2] = [
-    "<Q/Esc> quit    | <J> down    | <K> up   | <T> view mode |",
-    "<Ent>   details | <R> restart | <S> stop | <X> kill      | <D/Del> remove", 
-];
-
 struct TableColors {
-    buffer_bg: Color,
-    header_bg: Color,
     header_fg: Color,
     row_fg: Color,
     selected_row_fg: Color,
-    normal_row_color: Color,
-    alt_row_color: Color,
     footer_border_color: Color,
 }
 
 impl TableColors {
     const fn new() -> Self {
         Self {
-            buffer_bg: tailwind::SLATE.c950,
-            header_bg: tailwind::BLUE.c900,
             header_fg: tailwind::SLATE.c200,
             row_fg: tailwind::SLATE.c200,
             selected_row_fg: tailwind::BLUE.c400,
-            normal_row_color: tailwind::SLATE.c950,
-            alt_row_color: tailwind::SLATE.c900,
             footer_border_color: tailwind::BLUE.c400,
         }
     }
@@ -72,7 +59,7 @@ impl ContainersTable {
     }
 
     pub fn draw(&mut self, frame: &mut Frame) {
-        let vertical = &Layout::vertical([Constraint::Min(5), Constraint::Length(4)]);
+        let vertical = &Layout::vertical([Constraint::Min(5), Constraint::Length(3)]);
         let rects = vertical.split(frame.area());
 
         self.render_table(frame, rects[0]);
@@ -80,9 +67,7 @@ impl ContainersTable {
     }
 
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
-        let header_style = Style::default()
-            .fg(self.colors.header_fg)
-            .bg(self.colors.header_bg);
+        let header_style = Style::default().fg(self.colors.header_fg).underlined();
 
         let selected_row_style = Style::default()
             .add_modifier(Modifier::REVERSED)
@@ -95,18 +80,14 @@ impl ContainersTable {
             .style(header_style)
             .height(1);
 
-        let rows = self.items.iter().enumerate().map(|(index, data)| {
-            let color = match index % 2 {
-                0 => self.colors.normal_row_color,
-                _ => self.colors.alt_row_color,
-            };
+        let rows = self.items.iter().map(|data| {
             let item = data.ref_array();
             let ports: Vec<&str> = data.ports.split("\n").collect();            
 
             item.into_iter()
                 .map(|content| Cell::from(Text::from(format!("\n{content}\n"))))
                 .collect::<Row>()
-                .style(Style::new().fg(self.colors.row_fg).bg(color))
+                .style(Style::new().fg(self.colors.row_fg))
                 .height((ports.len() + 2) as u16)
         });
 
@@ -124,7 +105,6 @@ impl ContainersTable {
         )
         .header(header)
         .row_highlight_style(selected_row_style)
-        .bg(self.colors.buffer_bg)
         .highlight_symbol(Text::from(vec![
             "".into(),
             bar.into(),
@@ -135,16 +115,14 @@ impl ContainersTable {
     }
 
     fn render_footer(&mut self, frame: &mut Frame, area: Rect) {
-        let footer_style = Style::new()
-            .fg(self.colors.row_fg)
-            .bg(self.colors.buffer_bg);
+        let footer_style = Style::new().fg(self.colors.row_fg);
         let block_style = Style::new().fg(self.colors.footer_border_color);
 
         let block = Block::bordered()
-            .border_type(BorderType::Double)
+            .border_type(BorderType::Plain)
             .border_style(block_style);
 
-        let footer = Paragraph::new(Text::from_iter(INFO_TEXT))
+        let footer = Paragraph::new(Text::from("<Ent> details | <T> view mode | <R> restart | <S> stop | <X> kill | <D/Del> remove"))
             .style(footer_style)
             .left_aligned()
             .block(block);
