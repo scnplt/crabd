@@ -4,9 +4,9 @@ use strum_macros::{Display, EnumIter, FromRepr};
 use ratatui::{
     buffer::Buffer, 
     layout::{Constraint, Layout, Rect}, 
-    style::{palette::tailwind, Color, Style, Stylize}, 
+    style::{palette::tailwind, Color, Style, Styled, Stylize}, 
     text::{Line, Text}, 
-    widgets::{Block, BorderType, Paragraph, Tabs, Widget}, 
+    widgets::{Block, BorderType, Padding, Paragraph, Tabs, Widget}, 
     Frame
 };
 
@@ -65,18 +65,22 @@ impl SelectedTab {
 
     fn render_status_tab(self, area: Rect, buf: &mut Buffer) {
         // TODO
+        Block::new().render(area, buf);
     }
 
     fn render_details_tab(self, area: Rect, buf: &mut Buffer) {
         // TODO
+        Block::new().render(area, buf);
     }
 
     fn render_volumes_tab(self, area: Rect, buf: &mut Buffer) {
         // TODO
+        Block::new().render(area, buf);
     }
 
     fn render_network_tab(self, area: Rect, buf: &mut Buffer) {
         // TODO
+        Block::new().render(area, buf);
     }
 }
 
@@ -89,13 +93,18 @@ pub struct ContainerInfo {
 impl ContainerInfo {
     
     pub fn draw(&mut self, frame: &mut Frame) {
+        let size = frame.area();
         let vertical = Layout::vertical([Constraint::Length(1), Constraint::Min(0), Constraint::Length(3)]);
-        let [header_area, inner_area, footer_area] = vertical.areas(frame.area());
+        let [header_area, inner_area, footer_area] = vertical.areas(size);
 
-        let horizontal = Layout::horizontal([Constraint::Min(0), Constraint::Length(22)]);
-        let [tabs_area, title_area] = horizontal.areas(header_area);
+        let horizontal = Layout::horizontal([Constraint::Min(23), Constraint::Min(0)]);
+        let [title_area, tabs_area] = horizontal.areas(header_area);
 
         let buf = frame.buffer_mut();
+
+        Block::new()
+            .bg(tailwind::SLATE.c950)
+            .render(size, buf);
 
         render_title(title_area, buf);
         render_tabs(self.selected_tab, tabs_area, buf);
@@ -117,14 +126,19 @@ fn render_title(area: Rect, buf: &mut Buffer) {
 }
 
 fn render_tabs(selected_tab: SelectedTab, area: Rect, buf: &mut Buffer) {
+    let highlight_style = Style::new()
+        .fg(tailwind::SLATE.c950)
+        .bg(tailwind::BLUE.c400)
+        .bold();
+
     let titles = SelectedTab::iter().map(SelectedTab::title);
-    let highlight_style = (Color::default(), tailwind::RED.c700);
     let selected_tab_index = selected_tab as usize;
+
     Tabs::new(titles)
         .highlight_style(highlight_style)
         .select(selected_tab_index)
-        .padding("", "")
-        .divider(" ")
+        .padding("", " ")
+        .divider("")
         .render(area, buf);
 }
 
