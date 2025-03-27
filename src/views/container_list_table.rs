@@ -122,7 +122,7 @@ impl ContainersTable {
             .border_type(BorderType::Plain)
             .border_style(block_style);
 
-        let footer = Paragraph::new(Text::from(" <Ent> details | <T> view mode | <R> restart | <S> stop | <X> kill | <D/Del> remove"))
+        let footer = Paragraph::new(Text::from(" <Ent> details | <T> view mode | <R> restart | <S> stop | <X> kill | <Del/D> remove"))
             .style(footer_style)
             .left_aligned()
             .block(block);
