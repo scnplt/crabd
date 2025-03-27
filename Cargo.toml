@@ -1,8 +1,8 @@
 [package]
-name = "tock"
+name = "crabd"
 version = "0.1.0"
 authors = ["Sertan Canpolat <58915038+scnplt@users.noreply.github.com>"]
-license = "MIT"
+license = "Apache-2.0"
 edition = "2024"
 
 [dependencies]
