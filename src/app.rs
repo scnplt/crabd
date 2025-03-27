@@ -7,7 +7,7 @@ use crate::{
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use tokio::sync::mpsc::Receiver;
 use std::{io, sync::{Arc, Mutex}, time::Duration};
-use bollard::secret::{ContainerInspectResponse, ContainerState, ContainerStateStatusEnum, ContainerSummary, MountPointTypeEnum, Port, PortTypeEnum};
+use bollard::secret::{ContainerInspectResponse, ContainerState, ContainerStateStatusEnum, ContainerSummary, MountPointTypeEnum, Port, PortBinding, PortTypeEnum};
 use ratatui::DefaultTerminal;
  
 pub enum CurrentScreen {
@@ -173,12 +173,10 @@ fn map_to_container_data(containers: Vec<ContainerSummary>, show_all: bool) -> V
             if show_all { true } else { String::eq(&state, "running") }
         })
         .map(|container| {
-            let mut name = "NaN".to_string();
-            if let Some(n) = container.names.as_deref().unwrap().first() {
-                if let Some(stripped) = n.strip_prefix('/') {
-                    name = stripped.to_string()
-                }
-            }
+            let name: String = container.names.as_deref()
+                .and_then(|names| names.first())
+                .and_then(|name| name.strip_prefix("/"))
+                .map_or("NaN".to_string(), |name| name.to_string());
         
             ContainerData {
                 id: container.id.as_deref().unwrap_or("-").to_string(),
@@ -220,15 +218,73 @@ fn get_ports_text(ports: &[Port]) -> String {
 }
 
 fn map_to_container_info_data(container: ContainerInspectResponse) -> ContainerInfoData {
-    let mut name = "NaN".to_string();
-    if let Some(n) = container.name.as_deref() {
-        if let Some(stripped) = n.strip_prefix('/') {
-            name = stripped.to_string()
-        }
-    }
+    let name = container.name.as_deref()
+        .and_then(|name| name.strip_prefix("/"))
+        .map(String::from)
+        .unwrap_or_else(|| "NaN".to_string());
 
-    let state = container.state.as_ref().unwrap_or(&ContainerState::default())
-        .status.unwrap_or(ContainerStateStatusEnum::EMPTY).to_string();
+    let config = container.config.as_ref();
+    let image = config
+        .and_then(|c| c.image.clone())
+        .unwrap_or_else(|| "-".to_string());
+    let cmd = config
+        .and_then(|c| c.cmd.as_ref())
+        .map(|cmd| cmd.join("\n"))
+        .unwrap_or_else(|| "-".to_string());
+    let env = config
+        .and_then(|c| c.env.as_ref())
+        .map(|env| env.join("\n"))
+        .unwrap_or_else(|| "-".to_string());
+    let entrypoint = config
+        .and_then(|c| c.entrypoint.as_ref())
+        .map(|e| e.join("\n"))
+        .unwrap_or_else(|| "-".to_string());
+
+    let restart_policies = container.host_config.as_ref()
+        .and_then(|c| c.restart_policy.as_ref())
+        .and_then(|c| c.name)
+        .map(|name| format!("{:?}", name).to_lowercase().replace("_", "-"))
+        .unwrap_or_else(|| "-".to_string());
+
+    let network_settings = container.network_settings.as_ref();
+    let ip_address = network_settings
+        .and_then(|ns| ns.ip_address.clone())
+        .unwrap_or_else(|| "-".to_string());
+
+    let port_configs: String = network_settings
+    .as_ref()
+    .and_then(|ns| ns.ports.as_ref())
+    .map(|ports| {
+        ports.iter().map(|(port, bindings)| {
+            let (ipv4_binding, ipv6_binding) = bindings.as_ref().map(|b| {
+                let ipv4 = b.iter().find(|pb| pb.host_ip == Some("0.0.0.0".to_string()));
+                let ipv6 = b.iter().find(|pb| pb.host_ip == Some("::".to_string()));
+                (ipv4, ipv6)
+            }).unwrap_or((None, None));
+
+            let port_number = port.split('/').next().unwrap_or("");
+            let protocol = port.split('/').nth(1).unwrap_or("");
+
+            let ip_map = |pb: &PortBinding| -> String { format!("{}:{}", pb.host_ip.as_deref().unwrap_or(""), pb.host_port.as_deref().unwrap_or("")) };
+            let ipv4_str = ipv4_binding.map(ip_map).unwrap_or_default();
+            let ipv6_str = ipv6_binding.map(ip_map).unwrap_or_default();
+
+            match (ipv4_str.is_empty(), ipv6_str.is_empty()) {
+                (false, false) => format!("{} | {} -> {}/{}", ipv4_str, ipv6_str, port_number, protocol),
+                (false, true) => format!("{} -> {}/{}", ipv4_str, port_number, protocol),
+                (true, false) => format!("{} -> {}/{}", ipv6_str, port_number, protocol),
+                _ => "".to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+    })
+    .unwrap_or_else(|| "-".to_string());
+
+    let default_state = ContainerState::default();
+    let state_info = container.state.as_ref().unwrap_or(&default_state);
+    let state: String = state_info.status.unwrap_or(ContainerStateStatusEnum::EMPTY).to_string();
+    let start_time: String = state_info.started_at.as_deref().unwrap_or("-").to_string();
 
     let mounts = container.mounts.as_ref().map_or("-".to_string(), |points| {
         let mut mp = points.iter()
@@ -249,18 +305,19 @@ fn map_to_container_info_data(container: ContainerInspectResponse) -> ContainerI
         mp.join("\n")
     });
 
-    let image = if let Some(config) = container.config {
-        config.image.unwrap_or("-".to_string())
-    } else {
-        "-".to_string()
-    };
-
     ContainerInfoData {
         id: container.id.as_deref().unwrap_or("-").to_string(),
         name,
         image,
         created: container.created.as_deref().unwrap_or("-").to_string(),
         state,
-        mounts,
+        ip_address,
+        start_time,
+        port_configs,
+        cmd,
+        entrypoint,
+        env,
+        restart_policies,
+        volumes: mounts,
     }
 }

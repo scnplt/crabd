@@ -10,14 +10,21 @@ use ratatui::{
     Frame
 };
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ContainerInfoData {
     pub id: String,
     pub name: String,
     pub image: String,
     pub created: String,
     pub state: String,
-    pub mounts: String,
+    pub ip_address: String,
+    pub start_time: String,
+    pub port_configs: String,
+    pub cmd: String,
+    pub entrypoint: String,
+    pub env: String,
+    pub restart_policies: String,
+    pub volumes: String,
 }
 
 #[derive(Default, Clone, Copy, Display, FromRepr, EnumIter)]
@@ -54,31 +61,80 @@ impl SelectedTab {
         Self::from_repr(next_index).unwrap_or(self)
     }
 
-    fn render(self, area: Rect, buf: &mut Buffer) {
+    fn render(self, area: Rect, buf: &mut Buffer, data: &ContainerInfoData) {
         match self {
-            Self::Status => self.render_status_tab(area, buf),
-            Self::Details => self.render_details_tab(area, buf),
-            Self::Volumes => self.render_volumes_tab(area, buf),
-            Self::Network => self.render_network_tab(area, buf),
+            Self::Status => self.render_status_tab(area, buf, data),
+            Self::Details => self.render_details_tab(area, buf, data),
+            Self::Volumes => self.render_volumes_tab(area, buf, data),
+            Self::Network => self.render_network_tab(area, buf, data),
         }
     }
 
-    fn render_status_tab(self, area: Rect, buf: &mut Buffer) {
+    fn render_status_tab(self, area: Rect, buf: &mut Buffer, data: &ContainerInfoData) {
+        let key_style = Style::new().fg(Color::Green);
+
+        let lines = [
+            (" ID: ", data.id.clone()),
+            (" Name: ", data.name.clone()),
+            (" IP Address: ", data.ip_address.clone()),
+            (" State: ", data.state.clone()),
+            (" Created: ", data.created.clone()),
+            (" Start Time: ", data.start_time.clone()),
+        ].into_iter()
+        .map(|(key, content)| Line::from_iter([key.set_style(key_style), content.into()]))
+        .collect::<Vec<Line>>();
+
+        let block = Block::bordered()
+            .border_type(BorderType::Plain)
+            .border_style(Style::new().fg(tailwind::BLUE.c400));
+
+        Paragraph::new(lines)
+            .block(block)
+            .left_aligned()
+            .render(area, buf);
+    }
+
+    fn render_details_tab(self, area: Rect, buf: &mut Buffer, data: &ContainerInfoData) {
+        let key_style = Style::new().fg(Color::Green);
+
+        let mut lines = [
+            (" Image: ", data.image.clone()),
+            (" CMD: ", data.cmd.clone()),
+            (" Entrypoint: ", data.entrypoint.clone()),
+            (" Restart Policies: ", data.restart_policies.clone()),
+        ].into_iter()
+        .map(|(key, content)| Line::from_iter([key.set_style(key_style), content.into()]))
+        .collect::<Vec<Line>>();
+
+        lines.push(Line::from(" Port Configs: ".set_style(key_style)));
+        let mut ports: Vec<&str> = data.port_configs.split("\n").collect();
+        ports.sort_by_key(|p| *p);
+        ports.iter()
+            .filter(|p| !p.is_empty())
+            .for_each(|p| lines.push(Line::from(format!("  - {}", p))));
+
+        
+        lines.push(Line::from(" ENV: ".set_style(key_style)));
+        let mut envs: Vec<&str> = data.env.split("\n").collect();
+        envs.sort_by_key(|env| *env);
+        envs.iter().for_each(|env| lines.push(Line::from(format!("  - {}", env))));
+
+        let block = Block::bordered()
+            .border_type(BorderType::Plain)
+            .border_style(Style::new().fg(tailwind::BLUE.c400));
+
+        Paragraph::new(lines)
+            .block(block)
+            .left_aligned()
+            .render(area, buf);
+    }
+
+    fn render_volumes_tab(self, area: Rect, buf: &mut Buffer, data: &ContainerInfoData) {
         // TODO
         Block::new().render(area, buf);
     }
 
-    fn render_details_tab(self, area: Rect, buf: &mut Buffer) {
-        // TODO
-        Block::new().render(area, buf);
-    }
-
-    fn render_volumes_tab(self, area: Rect, buf: &mut Buffer) {
-        // TODO
-        Block::new().render(area, buf);
-    }
-
-    fn render_network_tab(self, area: Rect, buf: &mut Buffer) {
+    fn render_network_tab(self, area: Rect, buf: &mut Buffer, data: &ContainerInfoData) {
         // TODO
         Block::new().render(area, buf);
     }
@@ -103,7 +159,7 @@ impl ContainerInfo {
 
         render_title(title_area, buf);
         render_tabs(self.selected_tab, tabs_area, buf);
-        self.selected_tab.render(inner_area, buf);
+        self.selected_tab.render(inner_area, buf, &self.data);
         render_footer(footer_area, buf);
     }
 
@@ -145,7 +201,7 @@ fn render_footer(area: Rect, buf: &mut Buffer) {
         .border_type(BorderType::Plain)
         .border_style(border_style);
 
-    let footer = Paragraph::new(Text::from("<Q/Esc> back"))
+    let footer = Paragraph::new(Text::from(" <Q/Esc> back"))
         .style(footer_style)
         .left_aligned()
         .block(block);
