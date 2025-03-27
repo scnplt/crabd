@@ -218,6 +218,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
+name = "crabd"
+version = "0.1.0"
+dependencies = [
+ "bollard",
+ "color-eyre",
+ "crossterm",
+ "ratatui",
+ "strum 0.27.1",
+ "strum_macros 0.27.1",
+ "tokio",
+]
+
+[[package]]
 name = "crossterm"
 version = "0.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1335,19 +1348,6 @@ checksum = "9117f5d4db391c1cf6927e7bea3db74b9a1c1add8f7eda9ffd5364f40f57b82f"
 dependencies = [
  "displaydoc",
  "zerovec",
-]
-
-[[package]]
-name = "tock"
-version = "0.1.0"
-dependencies = [
- "bollard",
- "color-eyre",
- "crossterm",
- "ratatui",
- "strum 0.27.1",
- "strum_macros 0.27.1",
- "tokio",
 ]
 
 [[package]]
