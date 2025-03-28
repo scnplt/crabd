@@ -1,5 +1,6 @@
-use std::cmp::{max, min};
+use std::{cmp::{max, min}, collections::HashMap};
 
+use bollard::secret::{ContainerInspectResponse, ContainerState, ContainerStateStatusEnum, MountPoint, MountPointTypeEnum, PortBinding};
 use crossterm::event::KeyCode;
 use ratatui::{
     buffer::Buffer, 
@@ -26,6 +27,119 @@ pub struct ContainerInfoData {
     pub restart_policies: String,
     pub volumes: String,
 }
+
+impl ContainerInfoData {
+    
+    pub fn from(container: ContainerInspectResponse) -> Self {
+        let name = container.name.as_deref()
+            .and_then(|name| name.strip_prefix("/"))
+            .map(String::from)
+            .unwrap_or_else(|| "NaN".to_string());
+
+        let config = container.config.as_ref();
+        let image = config
+            .and_then(|c| c.image.clone())
+            .unwrap_or_else(|| "-".to_string());
+        let cmd = config
+            .and_then(|c| c.cmd.as_ref())
+            .map(|cmd| cmd.join("\n"))
+            .unwrap_or_else(|| "-".to_string());
+        let env = config
+            .and_then(|c| c.env.as_ref())
+            .map(|env| env.join("\n"))
+            .unwrap_or_else(|| "-".to_string());
+        let entrypoint = config
+            .and_then(|c| c.entrypoint.as_ref())
+            .map(|e| e.join("\n"))
+            .unwrap_or_else(|| "-".to_string());
+
+        let restart_policies = container.host_config.as_ref()
+            .and_then(|c| c.restart_policy.as_ref())
+            .and_then(|c| c.name)
+            .map(|name| format!("{:?}", name).to_lowercase().replace("_", "-"))
+            .unwrap_or_else(|| "-".to_string());
+
+        let network_settings = container.network_settings.as_ref();
+        let ip_address = network_settings
+            .and_then(|ns| ns.ip_address.clone())
+            .unwrap_or_else(|| "-".to_string());
+
+        let port_configs: String = network_settings
+            .as_ref()
+            .and_then(|ns| ns.ports.as_ref())
+            .map(get_ports_text)
+            .unwrap_or_else(|| "-".to_string());
+
+        let default_state = ContainerState::default();
+        let state_info = container.state.as_ref().unwrap_or(&default_state);
+        let state: String = state_info.status.unwrap_or(ContainerStateStatusEnum::EMPTY).to_string();
+        let start_time: String = state_info.started_at.as_deref().unwrap_or("-").to_string();
+
+        let mounts = container.mounts.as_ref().map_or("-".to_string(), get_mounts_text);
+
+        Self {
+            id: container.id.as_deref().unwrap_or("-").to_string(),
+            name,
+            image,
+            created: container.created.as_deref().unwrap_or("-").to_string(),
+            state,
+            ip_address,
+            start_time,
+            port_configs,
+            cmd,
+            entrypoint,
+            env,
+            restart_policies,
+            volumes: mounts,
+        }
+    }
+}
+
+fn get_ports_text(ports: &HashMap<String, Option<Vec<PortBinding>>>) -> String {
+    ports.iter().map(|(port, bindings)| {
+        let (ipv4_binding, ipv6_binding) = bindings.as_ref().map(|b| {
+            let ipv4 = b.iter().find(|pb| pb.host_ip == Some("0.0.0.0".to_string()));
+            let ipv6 = b.iter().find(|pb| pb.host_ip == Some("::".to_string()));
+            (ipv4, ipv6)
+        }).unwrap_or((None, None));
+
+        let port_number = port.split('/').next().unwrap_or("");
+        let protocol = port.split('/').nth(1).unwrap_or("");
+
+        let ipv4_str = ipv4_binding.map(get_port_binding_text).unwrap_or_default();
+        let ipv6_str = ipv6_binding.map(get_port_binding_text).unwrap_or_default();
+
+        match (ipv4_str.is_empty(), ipv6_str.is_empty()) {
+            (false, false) => format!("{} | {} -> {}/{}", ipv4_str, ipv6_str, port_number, protocol),
+            (false, true) => format!("{} -> {}/{}", ipv4_str, port_number, protocol),
+            (true, false) => format!("{} -> {}/{}", ipv6_str, port_number, protocol),
+            _ => "".to_string(),
+        }
+    })
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
+fn get_port_binding_text(port_binding: &PortBinding) -> String {
+    format!("{}:{}", port_binding.host_ip.as_deref().unwrap_or(""), port_binding.host_port.as_deref().unwrap_or(""))
+}
+
+fn get_mounts_text(mount_points: &Vec<MountPoint>) -> String {
+    let mut mp = mount_points.iter().map(|mp| {
+        let source = match mp.typ {
+            Some(MountPointTypeEnum::VOLUME { .. }) => mp.name.clone().unwrap_or("-".to_string()),
+            Some(_) => mp.source.clone().unwrap_or("-".to_string()),
+            None => "-".to_string(),
+        };
+
+        let destination = mp.destination.clone().unwrap_or("-".to_string());
+        format!("{} -> {}", source, destination)
+    }).collect::<Vec<String>>();
+
+    mp.sort_by_key(|v| v.clone());
+    mp.join("\n")
+}
+
 #[derive(Default)]
 pub struct ContainerInfo {
     pub data: ContainerInfoData,
