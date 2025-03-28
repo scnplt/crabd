@@ -1,12 +1,12 @@
 use crossterm::event::KeyCode;
 use style::palette::tailwind;
 use ratatui::{
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Rect},
     style::{self, Color, Modifier, Style, Stylize},
     text::Text,
     widgets::{
-        Block, BorderType, Cell, HighlightSpacing, 
-        Paragraph, Row, Table, TableState,
+        Cell, HighlightSpacing, 
+        Row, Table, TableState,
     },
     Frame,
 };
@@ -15,7 +15,6 @@ struct TableColors {
     header_fg: Color,
     row_fg: Color,
     selected_row_fg: Color,
-    footer_border_color: Color,
 }
 
 impl TableColors {
@@ -24,7 +23,6 @@ impl TableColors {
             header_fg: tailwind::SLATE.c200,
             row_fg: tailwind::SLATE.c200,
             selected_row_fg: tailwind::BLUE.c400,
-            footer_border_color: tailwind::BLUE.c400,
         }
     }
 }
@@ -58,15 +56,7 @@ impl ContainersTable {
         }
     }
 
-    pub fn draw(&mut self, frame: &mut Frame) {
-        let vertical = &Layout::vertical([Constraint::Min(5), Constraint::Length(3)]);
-        let rects = vertical.split(frame.area());
-
-        self.render_table(frame, rects[0]);
-        self.render_footer(frame, rects[1]);
-    }
-
-    fn render_table(&mut self, frame: &mut Frame, area: Rect) {
+    pub fn draw(&mut self, frame: &mut Frame, area: Rect) {
         let header_style = Style::default().fg(self.colors.header_fg).underlined();
 
         let selected_row_style = Style::default()
@@ -112,22 +102,6 @@ impl ContainersTable {
         .highlight_spacing(HighlightSpacing::Always);
 
         frame.render_stateful_widget(table, area, &mut self.state);
-    }
-
-    fn render_footer(&mut self, frame: &mut Frame, area: Rect) {
-        let footer_style = Style::new().fg(self.colors.row_fg);
-        let block_style = Style::new().fg(self.colors.footer_border_color);
-
-        let block = Block::bordered()
-            .border_type(BorderType::Plain)
-            .border_style(block_style);
-
-        let footer = Paragraph::new(Text::from(" <Ent> details | <T> view mode | <R> restart | <S> stop | <X> kill | <Del/D> remove"))
-            .style(footer_style)
-            .left_aligned()
-            .block(block);
-        
-        frame.render_widget(footer, area);
     }
 
     pub fn get_current_container_id(&self) -> String {
