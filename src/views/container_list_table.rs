@@ -1,3 +1,4 @@
+use bollard::secret::{ContainerSummary, Port, PortTypeEnum};
 use crossterm::event::KeyCode;
 use style::palette::tailwind;
 use ratatui::{
@@ -39,6 +40,59 @@ impl ContainerData {
     const fn ref_array(&self) -> [&String; 5] {
         [&self.id, &self.name, &self.image, &self.state, &self.ports]
     }
+
+    pub fn from_list(containers: Vec<ContainerSummary>, show_all: bool) -> Vec<Self> {
+        let mut result_list = containers.iter()
+            .filter(|container| {
+                let state = container.state.as_deref().unwrap_or("-").to_string();
+                if show_all { true } else { String::eq(&state, "running") }
+            })
+            .map(ContainerData::from)
+            .collect::<Vec<ContainerData>>();
+    
+        result_list.sort_by(|p, n| {
+            let p_is_running = p.state.starts_with("r");
+            let n_is_running = n.state.starts_with("r");
+
+            match (p_is_running, n_is_running) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => p.state.cmp(&n.state),
+            }
+        });
+    
+        result_list
+    }
+
+    pub fn from(container: &ContainerSummary) -> Self {
+        let name: String = container.names.as_deref()
+            .and_then(|names| names.first())
+            .and_then(|name| name.strip_prefix("/"))
+            .map_or("NaN".to_string(), |name| name.to_string());
+
+        Self {
+            id: container.id.as_deref().unwrap_or("-").to_string(),
+            name,
+            image: container.image.as_deref().unwrap_or("-").to_string(),
+            state: container.state.as_deref().unwrap_or("-").to_string(),
+            ports: container.ports.as_ref().map_or("-".to_string(), |p| get_ports_text(p)),
+        }
+    }
+}
+
+fn get_ports_text(ports: &[Port]) -> String {
+    let mut filtered_ports: Vec<(u16, u16, PortTypeEnum)> = ports.iter()
+        .filter(|p| p.public_port.is_some())
+        .map(|p| (p.private_port, p.public_port.unwrap(), p.typ.unwrap()))
+        .collect();
+
+    filtered_ports.sort_by_key(|&(private, _, _)| private);
+    filtered_ports.dedup();
+    
+    filtered_ports.iter()
+        .map(|&(private, public, typ)| format!("{}:{}/{}", private, public, typ))
+        .collect::<Vec<String>>()
+        .join("\n")
 }
 
 pub struct ContainersTable {
