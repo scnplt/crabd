@@ -8,7 +8,13 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use tokio::sync::mpsc::Receiver;
 use std::{io, sync::{Arc, Mutex}, time::Duration};
 use bollard::secret::{ContainerInspectResponse, ContainerState, ContainerStateStatusEnum, ContainerSummary, MountPointTypeEnum, Port, PortBinding, PortTypeEnum};
-use ratatui::DefaultTerminal;
+use ratatui::{
+    buffer::Buffer, 
+    layout::{Constraint, Layout, Rect}, 
+    style::{palette::tailwind, Style}, 
+    widgets::{Block, BorderType, Paragraph, Widget}, 
+    DefaultTerminal
+};
  
 pub enum CurrentScreen {
     List,
@@ -53,38 +59,41 @@ impl App {
             container_info: ContainerInfo::default(),
             docker: client,
             next_operation: NextOperation::None,
-            selected_container_id: first_container_id
+            selected_container_id: first_container_id,
         }
     }
 
     pub async fn run(&mut self, terminal: &mut DefaultTerminal, rx: &mut Receiver<Vec<ContainerSummary>>) -> io::Result<()> {
         while !self.should_exit {
+            let vertical_layout = Layout::vertical([Constraint::Min(5), Constraint::Length(3)]);
+            let [content_area, footer_area] = vertical_layout.areas(terminal.get_frame().area());
+
             match self.current_screen {
-                CurrentScreen::List => self.draw_containers_table(terminal, rx).await,
-                CurrentScreen::Info => self.draw_container_info(terminal).await
+                CurrentScreen::List => self.draw_containers_table(content_area, terminal, rx),
+                CurrentScreen::Info => self.draw_container_info(content_area, terminal).await
             }
+            
+            render_footer(footer_area, terminal.get_frame().buffer_mut(), &self.current_screen);
+
             self.handle_events()?;
             self.handle_container_operations().await;
         }
         Ok(())
     }
 
-    async fn draw_containers_table(&mut self, terminal: &mut DefaultTerminal, rx: &mut Receiver<Vec<ContainerSummary>>) {
-        terminal.draw(|frame| self.containers_table.draw(frame)).unwrap();
-
+    fn draw_containers_table(&mut self, area: Rect, terminal: &mut DefaultTerminal, rx: &mut Receiver<Vec<ContainerSummary>>) {
+        terminal.draw(|frame| self.containers_table.draw(frame, area)).unwrap();
         if let Ok(result) = rx.try_recv() {
-            let updated_container_list: Vec<ContainerData> = map_to_container_data(result, self.show_all);
-            self.containers_table.items = updated_container_list;
+            self.containers_table.items = map_to_container_data(result, self.show_all);
         }
     }
-
-    async fn draw_container_info(&mut self, terminal: &mut DefaultTerminal) {
+    
+    async fn draw_container_info(&mut self, area: Rect, terminal: &mut DefaultTerminal) {
         self.update_selected_container_id();
         let data = self.docker.inspect_container(&self.selected_container_id).await;
-
         if let Ok(info) = data {
             self.container_info.data = map_to_container_info_data(info);
-            terminal.draw(|frame| self.container_info.draw(frame)).unwrap();
+            terminal.draw(|frame| self.container_info.draw(frame, area)).unwrap();
         }
     }
 
@@ -322,4 +331,24 @@ fn map_to_container_info_data(container: ContainerInspectResponse) -> ContainerI
         restart_policies,
         volumes: mounts,
     }
+}
+
+fn render_footer(area: Rect, buf: &mut Buffer, current_screen: &CurrentScreen) {
+    let border_style = Style::new().fg(tailwind::BLUE.c400);
+    let footer_style = Style::new().fg(tailwind::SLATE.c200);
+
+    let title = match current_screen {
+        CurrentScreen::Info => " <Esc/Q> back | <R> restart | <S> stop | <X> kill | <Del/D> remove",
+        CurrentScreen::List => " <Ent> details | <T> view mode | <R> restart | <S> stop | <X> kill | <Del/D> remove"
+    };
+
+    let block = Block::bordered()
+        .border_type(BorderType::Plain)
+        .border_style(border_style);
+
+    Paragraph::new(title)
+        .style(footer_style)
+        .left_aligned()
+        .block(block)
+        .render(area, buf);
 }
