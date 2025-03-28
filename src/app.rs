@@ -64,6 +64,7 @@ impl App {
                 CurrentScreen::Info => self.draw_container_info(terminal).await
             }
             self.handle_events()?;
+            self.handle_container_operations().await;
         }
         Ok(())
     }
@@ -75,8 +76,6 @@ impl App {
             let updated_container_list: Vec<ContainerData> = map_to_container_data(result, self.show_all);
             self.containers_table.items = updated_container_list;
         }
-
-        self.handle_container_operations().await;
     }
 
     async fn draw_container_info(&mut self, terminal: &mut DefaultTerminal) {
@@ -94,7 +93,10 @@ impl App {
             NextOperation::Restart => self.docker.restart_container(&self.selected_container_id).await,
             NextOperation::Stop => self.docker.stop_container(&self.selected_container_id).await,
             NextOperation::Kill => self.docker.kill_container(&self.selected_container_id).await,
-            NextOperation::Remove => self.docker.remove_container(&self.selected_container_id).await,
+            NextOperation::Remove => {
+                self.current_screen = CurrentScreen::List;
+                self.docker.remove_container(&self.selected_container_id).await
+            },
             _ => Err("Pass".into())
         };
         
