@@ -2,6 +2,9 @@ mod docker;
 mod views;
 mod app;
 
+#[macro_use]
+mod logger;
+
 use crate::app::App;
 use crate::docker::client::DockerClient;
 
