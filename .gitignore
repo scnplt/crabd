@@ -3,3 +3,4 @@ target/
 
 **/*.rs.bak
 *.pdb
+*.log
