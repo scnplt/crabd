@@ -4,7 +4,7 @@ use bollard::secret::{ContainerInspectResponse, ContainerState, ContainerStateSt
 use crossterm::event::KeyCode;
 use ratatui::{
     buffer::Buffer, 
-    layout::{Margin, Rect}, 
+    layout::{Constraint, Layout, Margin, Rect}, 
     style::{palette::tailwind, Color, Style, Styled, Stylize}, 
     text::Line, 
     widgets::{Block, BorderType, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget, Wrap}, 
@@ -75,7 +75,7 @@ impl ContainerInfoData {
         let state: String = state_info.status.unwrap_or(ContainerStateStatusEnum::EMPTY).to_string();
         let start_time: String = state_info.started_at.as_deref().unwrap_or("-").to_string();
 
-        let mounts = container.mounts.as_ref().map_or("-".to_string(), get_mounts_text);
+        let mounts = container.mounts.as_ref().map_or("-".to_string(), |mp| get_mounts_text(mp));
 
         Self {
             id: container.id.as_deref().unwrap_or("-").to_string(),
@@ -124,7 +124,7 @@ fn get_port_binding_text(port_binding: &PortBinding) -> String {
     format!("{}:{}", port_binding.host_ip.as_deref().unwrap_or(""), port_binding.host_port.as_deref().unwrap_or(""))
 }
 
-fn get_mounts_text(mount_points: &Vec<MountPoint>) -> String {
+fn get_mounts_text(mount_points: &[MountPoint]) -> String {
     let mut mp = mount_points.iter().map(|mp| {
         let source = match mp.typ {
             Some(MountPointTypeEnum::VOLUME { .. }) => mp.name.clone().unwrap_or("-".to_string()),
@@ -151,15 +151,20 @@ pub struct ContainerInfo {
 
 impl ContainerInfo {
     
-    pub fn draw(&mut self, frame: &mut Frame, area: Rect) {
+    pub fn draw(&mut self, frame: &mut Frame) {
+        let area = frame.area();
         let buf = frame.buffer_mut();
-
+        
         let content_lines = get_content_as_lines(&self.data);
         self.content_length = content_lines.len();
         self.content_area_size = area.height as usize;
 
-        render_content(area, buf, content_lines, self.vertical_scroll, self.data.name.clone());
-        self.render_scrollbar(area.inner(Margin { vertical: 1, horizontal: 0 }), buf);
+        let vertical_layout = Layout::vertical([Constraint::Min(0), Constraint::Length(3)]);
+        let [content_area, footer_area] = vertical_layout.areas(area);
+
+        render_content(content_area, buf, content_lines, self.vertical_scroll, self.data.name.clone());
+        self.render_scrollbar(content_area.inner(Margin { vertical: 1, horizontal: 0 }), buf);
+        render_footer(footer_area, buf, self.data.state == "running");
     }
 
     fn render_scrollbar(&mut self, area: Rect, buf: &mut Buffer) {
@@ -248,4 +253,22 @@ fn get_content_as_lines(data: &ContainerInfoData) -> Vec<Line<'static>> {
     lines.into_iter()
         .map(|(key, content)| Line::from_iter([key.set_style(key_style), content.into()]))
         .collect()
+}
+
+fn render_footer(area: Rect, buf: &mut Buffer, is_running: bool) {
+    let border_style = Style::new().fg(tailwind::BLUE.c400);
+    let footer_style = Style::new().fg(tailwind::SLATE.c200);
+
+    let op_text = if is_running { "| <S> stop | <X> kill " } else { "" };
+    let text = format!(" <Esc/Q> back | <R> restart {}| <Del/D> remove", op_text);
+
+    let block = Block::bordered()
+        .border_type(BorderType::Plain)
+        .border_style(border_style);
+
+    Paragraph::new(text)
+        .style(footer_style)
+        .left_aligned()
+        .block(block)
+        .render(area, buf);
 }
