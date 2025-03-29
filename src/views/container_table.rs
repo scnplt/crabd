@@ -2,27 +2,28 @@ use bollard::secret::{ContainerSummary, Port, PortTypeEnum};
 use crossterm::event::KeyCode;
 use style::palette::tailwind;
 use ratatui::{
-    layout::{Constraint, Layout, Margin, Rect},
-    style::{self, Color, Modifier, Style, Stylize},
-    text::Text,
-    widgets::{Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState},
-    Frame,
+    buffer::Buffer, 
+    layout::{Constraint, Layout, Rect}, 
+    style::{self, Modifier, Style}, 
+    text::Text, 
+    widgets::{Block, BorderType, Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState, Widget}, 
+    Frame
 };
 
-struct TableColors {
-    header_fg: Color,
-    row_fg: Color,
-    selected_row_fg: Color,
-    scrollbar_color: Color,
+struct TableStyles {
+    header_style: Style,
+    scrollbar_style: Style,
+    selected_row_style: Style,
+    row_style: Style
 }
 
-impl TableColors {
-    const fn new() -> Self {
+impl TableStyles {
+    fn default() -> Self {
         Self {
-            header_fg: tailwind::SLATE.c200,
-            row_fg: tailwind::SLATE.c200,
-            selected_row_fg: tailwind::BLUE.c400,
-            scrollbar_color: tailwind::BLUE.c900
+            header_style: Style::default().fg(tailwind::SLATE.c200),
+            scrollbar_style: Style::default().fg(tailwind::BLUE.c900),
+            selected_row_style: Style::default().add_modifier(Modifier::REVERSED).fg(tailwind::BLUE.c400),
+            row_style: Style::default().fg(tailwind::SLATE.c200),
         }
     }
 }
@@ -32,7 +33,7 @@ pub struct ContainerData {
     pub name: String,
     pub image: String,
     pub state: String,
-    pub ports: String
+    pub ports: String,
 }
 
 impl ContainerData {
@@ -97,10 +98,10 @@ fn get_ports_text(ports: &[Port]) -> String {
 pub struct ContainersTable {
     state: TableState,
     pub items: Vec<ContainerData>,
-    colors: TableColors,
     scrollbar_state: ScrollbarState,
     vertical_scroll: usize,
     row_heights: Vec<usize>,
+    styles: TableStyles,
 }
 
 impl ContainersTable {
@@ -108,87 +109,31 @@ impl ContainersTable {
         Self {
             state: TableState::default().with_selected(0),
             items,
-            colors: TableColors::new(),
             scrollbar_state: ScrollbarState::default(),
             vertical_scroll: 0,
             row_heights: vec![],
+            styles: TableStyles::default(),
         }
     }
 
-    pub fn draw(&mut self, frame: &mut Frame, area: Rect) {
-        let header_style = Style::default().fg(self.colors.header_fg).underlined();
-
-        let selected_row_style = Style::default()
-            .add_modifier(Modifier::REVERSED)
-            .fg(self.colors.selected_row_fg);
-
-        let header = ["ID", "Name", "Image", "State", "Ports"]
-            .into_iter()
-            .map(Cell::from)
-            .collect::<Row>()
-            .style(header_style)
-            .height(1);
-
-        self.row_heights.clear();
-        let rows = self.items.iter().map(|data| {
-            let item = data.ref_array();
-            let ports: Vec<&str> = data.ports.split("\n").filter(|s| !s.is_empty()).collect();    
-
-            let height = if ports.is_empty() { 3 } else { ports.len() + 2 };
-            self.row_heights.push(height);
-
-            item.into_iter()
-                .map(|content| Cell::from(Text::from(format!("\n{content}\n"))))
-                .collect::<Row>()
-                .style(Style::new().fg(self.colors.row_fg))
-                .height(height as u16)
-        });
-
-        let bar = " ● ";
-
-        let table = Table::new(
-            rows,
-            vec![
-                Constraint::Length(12),
-                Constraint::Percentage(20),
-                Constraint::Percentage(30),
-                Constraint::Percentage(10),
-                Constraint::Min(15),
-            ],
-        )
-        .header(header)
-        .row_highlight_style(selected_row_style)
-        .highlight_symbol(Text::from(vec![
-            "".into(),
-            bar.into(),
-        ]))
-        .highlight_spacing(HighlightSpacing::Always);
+    pub fn draw(&mut self, frame: &mut Frame, show_all: bool) {
+        let vertical_layout = Layout::vertical([Constraint::Min(0), Constraint::Length(3)]);
+        let [content_area, footer_area] = vertical_layout.areas(frame.area());
 
         let horizontal_layout = Layout::horizontal([Constraint::Min(0), Constraint::Length(1)]);
-        let [table_area, scrollbar_area] = horizontal_layout.areas(area);
+        let [table_area, scrollbar_area] = horizontal_layout.areas(content_area);
 
-        frame.render_stateful_widget(table, table_area, &mut self.state);
-        self.render_scrollbar(frame, scrollbar_area);
-    }
-
-    fn render_scrollbar(&mut self, frame: &mut Frame, area: Rect) {
+        self.row_heights.clear();
+        self.row_heights = render_table(frame, table_area, &self.items, &mut self.state, &self.styles);
         self.row_heights.pop();
-        let content_length = self.row_heights.iter().sum::<usize>();
 
+        let content_height = self.row_heights.iter().sum::<usize>();
         self.scrollbar_state = self.scrollbar_state
-            .content_length(content_length)
+            .content_length(content_height)
             .position(self.vertical_scroll);
+        render_scrollbar(frame, scrollbar_area, &mut self.scrollbar_state, &self.styles);
 
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(Some("^"))
-            .end_symbol(Some("v"))
-            .style(Style::new().fg(self.colors.scrollbar_color));
-
-        frame.render_stateful_widget(
-            scrollbar, 
-            area.inner(Margin { vertical: 1, horizontal: 0 }), 
-            &mut self.scrollbar_state
-        );
+        render_footer(footer_area, frame.buffer_mut(), show_all);
     }
 
     pub fn get_current_container_id(&self) -> String {
@@ -221,4 +166,77 @@ impl ContainersTable {
     fn update_vertical_scroll(&mut self, index: usize) {
         self.vertical_scroll = self.row_heights.iter().take(index).sum();
     }
+}
+
+fn render_table(frame: &mut Frame, area: Rect, items: &[ContainerData], table_state: &mut TableState, styles: &TableStyles) -> Vec<usize> {
+    let header = ["ID", "Name", "Image", "State", "Ports"]
+        .into_iter()
+        .map(Cell::from)
+        .collect::<Row>()
+        .style(styles.header_style)
+        .height(1);
+
+    let mut row_heights: Vec<usize> = vec![];
+    let rows = items.iter().map(|data| {
+        let item = data.ref_array();
+        let ports: Vec<&str> = data.ports.split("\n").filter(|s| !s.is_empty()).collect();    
+
+        let height = if ports.is_empty() { 3 } else { ports.len() + 2 };
+        row_heights.push(height);
+
+        item.into_iter()
+            .map(|content| Cell::from(Text::from(format!("\n{content}\n"))))
+            .collect::<Row>()
+            .style(styles.row_style)
+            .height(height as u16)
+    });
+
+    let bar = " ● ";
+    let widths = vec![
+        Constraint::Length(12),
+        Constraint::Percentage(20),
+        Constraint::Percentage(30),
+        Constraint::Percentage(10),
+        Constraint::Min(15),
+    ];
+
+    let table = Table::new(rows,widths)
+        .header(header)
+        .row_highlight_style(styles.selected_row_style)
+        .highlight_symbol(Text::from(vec![
+            "".into(),
+            bar.into(),
+        ]))
+        .highlight_spacing(HighlightSpacing::Always);
+
+    frame.render_stateful_widget(table, area, table_state);
+
+    row_heights
+}
+
+fn render_scrollbar(frame: &mut Frame, area: Rect, scrollbar_state: &mut ScrollbarState, styles: &TableStyles) {
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("^"))
+        .end_symbol(Some("v"))
+        .style(styles.scrollbar_style);
+
+    frame.render_stateful_widget(scrollbar, area, scrollbar_state);
+}
+
+fn render_footer(area: Rect, buf: &mut Buffer, show_all: bool) {
+    let border_style = Style::new().fg(tailwind::BLUE.c400);
+    let footer_style = Style::new().fg(tailwind::SLATE.c200);
+
+    let toggle_text = if show_all { "All" } else { "Running" };
+    let text = format!(" <Ent> details | <T> {} | <R> restart | <S> stop | <X> kill | <Del/D> remove", toggle_text);
+
+    let block = Block::bordered()
+        .border_type(BorderType::Plain)
+        .border_style(border_style);
+    
+    Paragraph::new(text)
+        .style(footer_style)
+        .left_aligned()
+        .block(block)
+        .render(area, buf);
 }

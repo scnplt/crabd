@@ -8,13 +8,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use tokio::sync::mpsc::Receiver;
 use std::{io, sync::{Arc, Mutex}, time::Duration};
 use bollard::secret::ContainerSummary;
-use ratatui::{
-    buffer::Buffer, 
-    layout::{Constraint, Layout, Rect}, 
-    style::{palette::tailwind, Style}, 
-    widgets::{Block, BorderType, Paragraph, Widget}, 
-    DefaultTerminal
-};
+use ratatui::DefaultTerminal;
  
 #[derive(PartialEq)]
 pub enum CurrentScreen {
@@ -67,35 +61,30 @@ impl App {
 
     pub async fn run(&mut self, terminal: &mut DefaultTerminal, rx: &mut Receiver<Vec<ContainerSummary>>) -> io::Result<()> {
         while !self.should_exit {
-            let vertical_layout = Layout::vertical([Constraint::Min(5), Constraint::Length(3)]);
-            let [content_area, footer_area] = vertical_layout.areas(terminal.get_frame().area());
-
             match self.current_screen {
-                CurrentScreen::List => self.draw_containers_table(content_area, terminal, rx),
-                CurrentScreen::Info => self.draw_container_info(content_area, terminal).await
+                CurrentScreen::List => self.draw_containers_table(terminal, rx),
+                CurrentScreen::Info => self.draw_container_info(terminal).await
             }
             
-            render_footer(footer_area, terminal.get_frame().buffer_mut(), &self.current_screen, self.show_all);
-
             self.handle_events()?;
             self.handle_container_operations().await;
         }
         Ok(())
     }
 
-    fn draw_containers_table(&mut self, area: Rect, terminal: &mut DefaultTerminal, rx: &mut Receiver<Vec<ContainerSummary>>) {
-        terminal.draw(|frame| self.containers_table.draw(frame, area)).unwrap();
+    fn draw_containers_table(&mut self, terminal: &mut DefaultTerminal, rx: &mut Receiver<Vec<ContainerSummary>>) {
+        terminal.draw(|frame| self.containers_table.draw(frame, self.show_all)).unwrap();
         if let Ok(result) = rx.try_recv() {
             self.containers_table.items = ContainerData::from_list(result, self.show_all);
         }
     }
     
-    async fn draw_container_info(&mut self, area: Rect, terminal: &mut DefaultTerminal) {
+    async fn draw_container_info(&mut self, terminal: &mut DefaultTerminal) {
         self.update_selected_container_id();
         let data = self.docker.inspect_container(&self.selected_container_id).await;
         if let Ok(info) = data {
             self.container_info.data = ContainerInfoData::from(info);
-            terminal.draw(|frame| self.container_info.draw(frame, area)).unwrap();
+            terminal.draw(|frame| self.container_info.draw(frame)).unwrap();
         }
     }
 
@@ -180,27 +169,4 @@ impl App {
         let container_id = self.containers_table.get_current_container_id();
         self.selected_container_id = container_id;
     }
-}
-
-fn render_footer(area: Rect, buf: &mut Buffer, current_screen: &CurrentScreen, show_all: bool) {
-    let border_style = Style::new().fg(tailwind::BLUE.c400);
-    let footer_style = Style::new().fg(tailwind::SLATE.c200);
-
-    let title = match current_screen {
-        CurrentScreen::Info => " <Esc/Q> back | <R> restart | <S> stop | <X> kill | <Del/D> remove".to_string(),
-        CurrentScreen::List => {
-            let toggle_text = if show_all { "All" } else { "Running" };
-            format!(" <Ent> details | <T> {} | <R> restart | <S> stop | <X> kill | <Del/D> remove", toggle_text)
-        }
-    };
-
-    let block = Block::bordered()
-        .border_type(BorderType::Plain)
-        .border_style(border_style);
-
-    Paragraph::new(title)
-        .style(footer_style)
-        .left_aligned()
-        .block(block)
-        .render(area, buf);
 }
