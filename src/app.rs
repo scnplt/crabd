@@ -1,7 +1,7 @@
 use crate::{
     docker::client::DockerClient, 
     views::{container_info::{ContainerInfo, ContainerInfoData}, 
-    container_list_table::{ContainerData, ContainersTable}}
+    container_table::{ContainerData, ContainersTable}}
 };
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent};

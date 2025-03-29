@@ -2,13 +2,10 @@ use bollard::secret::{ContainerSummary, Port, PortTypeEnum};
 use crossterm::event::KeyCode;
 use style::palette::tailwind;
 use ratatui::{
-    layout::{Constraint, Rect},
+    layout::{Constraint, Layout, Margin, Rect},
     style::{self, Color, Modifier, Style, Stylize},
     text::Text,
-    widgets::{
-        Cell, HighlightSpacing, 
-        Row, Table, TableState,
-    },
+    widgets::{Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState},
     Frame,
 };
 
@@ -16,6 +13,7 @@ struct TableColors {
     header_fg: Color,
     row_fg: Color,
     selected_row_fg: Color,
+    scrollbar_color: Color,
 }
 
 impl TableColors {
@@ -24,6 +22,7 @@ impl TableColors {
             header_fg: tailwind::SLATE.c200,
             row_fg: tailwind::SLATE.c200,
             selected_row_fg: tailwind::BLUE.c400,
+            scrollbar_color: tailwind::BLUE.c900
         }
     }
 }
@@ -98,7 +97,10 @@ fn get_ports_text(ports: &[Port]) -> String {
 pub struct ContainersTable {
     state: TableState,
     pub items: Vec<ContainerData>,
-    colors: TableColors
+    colors: TableColors,
+    scrollbar_state: ScrollbarState,
+    vertical_scroll: usize,
+    row_heights: Vec<usize>,
 }
 
 impl ContainersTable {
@@ -106,7 +108,10 @@ impl ContainersTable {
         Self {
             state: TableState::default().with_selected(0),
             items,
-            colors: TableColors::new()
+            colors: TableColors::new(),
+            scrollbar_state: ScrollbarState::default(),
+            vertical_scroll: 0,
+            row_heights: vec![],
         }
     }
 
@@ -124,15 +129,19 @@ impl ContainersTable {
             .style(header_style)
             .height(1);
 
+        self.row_heights.clear();
         let rows = self.items.iter().map(|data| {
             let item = data.ref_array();
-            let ports: Vec<&str> = data.ports.split("\n").collect();            
+            let ports: Vec<&str> = data.ports.split("\n").filter(|s| !s.is_empty()).collect();    
+
+            let height = if ports.is_empty() { 3 } else { ports.len() + 2 };
+            self.row_heights.push(height);
 
             item.into_iter()
                 .map(|content| Cell::from(Text::from(format!("\n{content}\n"))))
                 .collect::<Row>()
                 .style(Style::new().fg(self.colors.row_fg))
-                .height((ports.len() + 2) as u16)
+                .height(height as u16)
         });
 
         let bar = " ● ";
@@ -155,16 +164,38 @@ impl ContainersTable {
         ]))
         .highlight_spacing(HighlightSpacing::Always);
 
-        frame.render_stateful_widget(table, area, &mut self.state);
+        let horizontal_layout = Layout::horizontal([Constraint::Min(0), Constraint::Length(1)]);
+        let [table_area, scrollbar_area] = horizontal_layout.areas(area);
+
+        frame.render_stateful_widget(table, table_area, &mut self.state);
+        self.render_scrollbar(frame, scrollbar_area);
+    }
+
+    fn render_scrollbar(&mut self, frame: &mut Frame, area: Rect) {
+        self.row_heights.pop();
+        let content_length = self.row_heights.iter().sum::<usize>();
+
+        self.scrollbar_state = self.scrollbar_state
+            .content_length(content_length)
+            .position(self.vertical_scroll);
+
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("^"))
+            .end_symbol(Some("v"))
+            .style(Style::new().fg(self.colors.scrollbar_color));
+
+        frame.render_stateful_widget(
+            scrollbar, 
+            area.inner(Margin { vertical: 1, horizontal: 0 }), 
+            &mut self.scrollbar_state
+        );
     }
 
     pub fn get_current_container_id(&self) -> String {
-        if let Some(index) = self.state.selected() {
-            let container = self.items.get(index).unwrap();
-            return container.id.clone();
+        match self.state.selected() {
+            Some(index) => self.items.get(index).unwrap().id.clone(),
+            _ => "-1".to_string()
         }
-
-        "-1".to_string()
     }
 
     pub fn handle_key_event(&mut self, code: KeyCode) {
@@ -176,30 +207,18 @@ impl ContainersTable {
     }
 
     fn next_row(&mut self) {
-        let index = match self.state.selected() {
-            Some(i) => {
-                if i >= self.items.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
-            None => 0,
-        };
+        let index = self.state.selected().map_or(0, |i| if i >= self.items.len() - 1 { 0 } else { i + 1 });
         self.state.select(Some(index));
+        self.update_vertical_scroll(index);
     }
 
     fn previous_row(&mut self) {
-        let index = match self.state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.items.len() - 1
-                } else {
-                    i - 1
-                }
-            }
-            None => 0,
-        };
+        let index = self.state.selected().map_or(0, |i| if i == 0 { self.items.len() - 1 } else { i - 1 });
         self.state.select(Some(index));
+        self.update_vertical_scroll(index);
+    }
+
+    fn update_vertical_scroll(&mut self, index: usize) {
+        self.vertical_scroll = self.row_heights.iter().take(index).sum();
     }
 }
