@@ -75,7 +75,7 @@ impl App {
                 CurrentScreen::Info => self.draw_container_info(content_area, terminal).await
             }
             
-            render_footer(footer_area, terminal.get_frame().buffer_mut(), &self.current_screen);
+            render_footer(footer_area, terminal.get_frame().buffer_mut(), &self.current_screen, self.show_all);
 
             self.handle_events()?;
             self.handle_container_operations().await;
@@ -182,13 +182,16 @@ impl App {
     }
 }
 
-fn render_footer(area: Rect, buf: &mut Buffer, current_screen: &CurrentScreen) {
+fn render_footer(area: Rect, buf: &mut Buffer, current_screen: &CurrentScreen, show_all: bool) {
     let border_style = Style::new().fg(tailwind::BLUE.c400);
     let footer_style = Style::new().fg(tailwind::SLATE.c200);
 
     let title = match current_screen {
-        CurrentScreen::Info => " <Esc/Q> back | <R> restart | <S> stop | <X> kill | <Del/D> remove",
-        CurrentScreen::List => " <Ent> details | <T> view mode | <R> restart | <S> stop | <X> kill | <Del/D> remove"
+        CurrentScreen::Info => " <Esc/Q> back | <R> restart | <S> stop | <X> kill | <Del/D> remove".to_string(),
+        CurrentScreen::List => {
+            let toggle_text = if show_all { "All" } else { "Running" };
+            format!(" <Ent> details | <T> {} | <R> restart | <S> stop | <X> kill | <Del/D> remove", toggle_text)
+        }
     };
 
     let block = Block::bordered()
