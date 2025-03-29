@@ -4,12 +4,14 @@ use bollard::secret::{ContainerInspectResponse, ContainerState, ContainerStateSt
 use crossterm::event::KeyCode;
 use ratatui::{
     buffer::Buffer, 
-    layout::{Constraint, Layout, Margin, Rect}, 
+    layout::{Constraint, Layout, Rect}, 
     style::{palette::tailwind, Color, Style, Styled, Stylize}, 
     text::Line, 
-    widgets::{Block, BorderType, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget, Wrap}, 
+    widgets::{Block, BorderType, Paragraph, ScrollbarState, Widget, Wrap}, 
     Frame
 };
+
+use super::common::{render_footer, render_scrollbar};
 
 #[derive(Default, Clone)]
 pub struct ContainerInfoData {
@@ -152,32 +154,27 @@ pub struct ContainerInfo {
 impl ContainerInfo {
     
     pub fn draw(&mut self, frame: &mut Frame) {
-        let area = frame.area();
-        let buf = frame.buffer_mut();
-        
+        let vertical_layout = Layout::vertical([Constraint::Min(0), Constraint::Length(3)]);
+        let [content_area, footer_area] = vertical_layout.areas(frame.area());
+
+        let horizontal_layout = Layout::horizontal([Constraint::Min(0), Constraint::Length(1)]);
+        let [info_area, scrollbar_area] = horizontal_layout.areas(content_area);
+
         let content_lines = get_content_as_lines(&self.data);
         self.content_length = content_lines.len();
-        self.content_area_size = area.height as usize;
+        self.content_area_size = content_area.height as usize;
 
-        let vertical_layout = Layout::vertical([Constraint::Min(0), Constraint::Length(3)]);
-        let [content_area, footer_area] = vertical_layout.areas(area);
+        render_content(info_area, frame.buffer_mut(), content_lines, self.vertical_scroll, self.data.name.clone());
 
-        render_content(content_area, buf, content_lines, self.vertical_scroll, self.data.name.clone());
-        self.render_scrollbar(content_area.inner(Margin { vertical: 1, horizontal: 0 }), buf);
-        render_footer(footer_area, buf, self.data.state == "running");
-    }
-
-    fn render_scrollbar(&mut self, area: Rect, buf: &mut Buffer) {
         self.scrollbar_state = self.scrollbar_state
             .content_length(self.content_length)
             .viewport_content_length(self.content_area_size)
             .position(self.vertical_scroll);
 
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(Some("^"))
-            .end_symbol(Some("v"));
+        render_scrollbar(frame, scrollbar_area, &mut self.scrollbar_state, None);
 
-        scrollbar.render(area, buf, &mut self.scrollbar_state);
+        let is_running = self.data.state == "running";
+        render_footer(footer_area, frame.buffer_mut(), get_footer_text(is_running), None, None);
     }
 
     pub fn handle_key_event(&mut self, code: KeyCode) {
@@ -255,20 +252,7 @@ fn get_content_as_lines(data: &ContainerInfoData) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn render_footer(area: Rect, buf: &mut Buffer, is_running: bool) {
-    let border_style = Style::new().fg(tailwind::BLUE.c400);
-    let footer_style = Style::new().fg(tailwind::SLATE.c200);
-
+fn get_footer_text(is_running: bool) -> String {
     let op_text = if is_running { "| <S> stop | <X> kill " } else { "" };
-    let text = format!(" <Esc/Q> back | <R> restart {}| <Del/D> remove", op_text);
-
-    let block = Block::bordered()
-        .border_type(BorderType::Plain)
-        .border_style(border_style);
-
-    Paragraph::new(text)
-        .style(footer_style)
-        .left_aligned()
-        .block(block)
-        .render(area, buf);
+    format!(" <Esc/Q> back | <R> restart {}| <Del/D> remove", op_text)
 }

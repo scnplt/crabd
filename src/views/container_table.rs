@@ -2,28 +2,29 @@ use bollard::secret::{ContainerSummary, Port, PortTypeEnum};
 use crossterm::event::KeyCode;
 use style::palette::tailwind;
 use ratatui::{
-    buffer::Buffer, 
     layout::{Constraint, Layout, Rect}, 
     style::{self, Modifier, Style}, 
     text::Text, 
-    widgets::{Block, BorderType, Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, TableState, Widget}, 
+    widgets::{Cell, HighlightSpacing, Row, ScrollbarState, Table, TableState}, 
     Frame
 };
 
+use super::common::{render_footer, render_scrollbar};
+
 struct TableStyles {
     header_style: Style,
-    scrollbar_style: Style,
     selected_row_style: Style,
-    row_style: Style
+    row_style: Style,
+    alt_row_style: Style,
 }
 
 impl TableStyles {
     fn default() -> Self {
         Self {
             header_style: Style::default().fg(tailwind::SLATE.c200),
-            scrollbar_style: Style::default().fg(tailwind::BLUE.c900),
             selected_row_style: Style::default().add_modifier(Modifier::REVERSED).fg(tailwind::BLUE.c400),
-            row_style: Style::default().fg(tailwind::SLATE.c200),
+            row_style: Style::default().bg(tailwind::SLATE.c800).fg(tailwind::SLATE.c200),
+            alt_row_style: Style::default().bg(tailwind::SLATE.c950),
         }
     }
 }
@@ -131,9 +132,9 @@ impl ContainersTable {
         self.scrollbar_state = self.scrollbar_state
             .content_length(content_height)
             .position(self.vertical_scroll);
-        render_scrollbar(frame, scrollbar_area, &mut self.scrollbar_state, &self.styles);
 
-        render_footer(footer_area, frame.buffer_mut(), show_all);
+        render_scrollbar(frame, scrollbar_area, &mut self.scrollbar_state, None);
+        render_footer(footer_area, frame.buffer_mut(), get_footer_text(show_all), None, None);
     }
 
     pub fn get_current_container_id(&self) -> String {
@@ -168,6 +169,11 @@ impl ContainersTable {
     }
 }
 
+fn get_footer_text(show_all: bool) -> String {
+    let toggle_text = if show_all { "All" } else { "Running" };
+    format!(" <Ent> details | <T> {} | <R> restart | <S> stop | <X> kill | <Del/D> remove", toggle_text)
+}
+
 fn render_table(frame: &mut Frame, area: Rect, items: &[ContainerData], table_state: &mut TableState, styles: &TableStyles) -> Vec<usize> {
     let header = ["ID", "Name", "Image", "State", "Ports"]
         .into_iter()
@@ -177,7 +183,8 @@ fn render_table(frame: &mut Frame, area: Rect, items: &[ContainerData], table_st
         .height(1);
 
     let mut row_heights: Vec<usize> = vec![];
-    let rows = items.iter().map(|data| {
+    let rows = items.iter().enumerate().map(|(index, data)| {
+        let style = if index % 2 == 0 { styles.row_style } else { styles.alt_row_style };
         let item = data.ref_array();
         let ports: Vec<&str> = data.ports.split("\n").filter(|s| !s.is_empty()).collect();    
 
@@ -187,7 +194,7 @@ fn render_table(frame: &mut Frame, area: Rect, items: &[ContainerData], table_st
         item.into_iter()
             .map(|content| Cell::from(Text::from(format!("\n{content}\n"))))
             .collect::<Row>()
-            .style(styles.row_style)
+            .style(style)
             .height(height as u16)
     });
 
@@ -212,31 +219,4 @@ fn render_table(frame: &mut Frame, area: Rect, items: &[ContainerData], table_st
     frame.render_stateful_widget(table, area, table_state);
 
     row_heights
-}
-
-fn render_scrollbar(frame: &mut Frame, area: Rect, scrollbar_state: &mut ScrollbarState, styles: &TableStyles) {
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(Some("^"))
-        .end_symbol(Some("v"))
-        .style(styles.scrollbar_style);
-
-    frame.render_stateful_widget(scrollbar, area, scrollbar_state);
-}
-
-fn render_footer(area: Rect, buf: &mut Buffer, show_all: bool) {
-    let border_style = Style::new().fg(tailwind::BLUE.c400);
-    let footer_style = Style::new().fg(tailwind::SLATE.c200);
-
-    let toggle_text = if show_all { "All" } else { "Running" };
-    let text = format!(" <Ent> details | <T> {} | <R> restart | <S> stop | <X> kill | <Del/D> remove", toggle_text);
-
-    let block = Block::bordered()
-        .border_type(BorderType::Plain)
-        .border_style(border_style);
-    
-    Paragraph::new(text)
-        .style(footer_style)
-        .left_aligned()
-        .block(block)
-        .render(area, buf);
 }
