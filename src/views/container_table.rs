@@ -133,7 +133,9 @@ impl ContainersTable {
             .position(self.vertical_scroll);
 
         render_scrollbar(frame, scrollbar_area, &mut self.scrollbar_state, None);
-        render_footer(footer_area, frame.buffer_mut(), get_footer_text(show_all), None, None);
+
+        let footer_text = get_footer_text(show_all, self.is_selected_container_running());
+        render_footer(footer_area, frame.buffer_mut(), footer_text, None, None);
     }
 
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
@@ -190,6 +192,10 @@ impl ContainersTable {
         }
     }
 
+    fn is_selected_container_running(&self) -> Option<bool> {
+        self.state.selected().map(|index| self.items.get(index).unwrap().state == "running")
+    }
+
     pub fn handle_key_event(&mut self, code: KeyCode) {
         match code {
             KeyCode::Char('j') | KeyCode::Down => self.next_row(),
@@ -215,7 +221,14 @@ impl ContainersTable {
     }
 }
 
-fn get_footer_text(show_all: bool) -> String {
+fn get_footer_text(show_all: bool, is_running: Option<bool>) -> String {
     let toggle_text = if show_all { "All" } else { "Running" };
-    format!(" <Ent> details | <T> {} | <R> restart | <S> stop | <X> kill | <Del/D> remove", toggle_text)
+    let mut op_text = "".to_string();
+
+    if let Some(running) = is_running {
+        let running_text = if running { "restart | <S> stop | <X> kill " } else { "start " };
+        op_text = format!(" | <R> {}| <Del/D> remove", running_text);
+    }
+
+    format!(" <Ent> details | <T> {}{}", toggle_text, op_text)
 }
