@@ -145,7 +145,7 @@ fn get_mounts_text(mount_points: &[MountPoint]) -> String {
 #[derive(Default)]
 pub struct ContainerInfo {
     pub data: ContainerInfoData,
-    vertical_scroll: usize,
+    pub vertical_scroll: usize,
     scrollbar_state: ScrollbarState,
     content_length: usize,
 }
@@ -251,6 +251,6 @@ fn get_content_as_lines(data: &ContainerInfoData) -> Vec<Line<'static>> {
 }
 
 fn get_footer_text(is_running: bool) -> String {
-    let op_text = if is_running { "| <S> stop | <X> kill " } else { "" };
-    format!(" <Esc/Q> back | <R> restart {}| <Del/D> remove", op_text)
+    let op_text = if is_running { "| <R> restart | <S> stop | <X> kill " } else { "| <R> start " };
+    format!(" <Esc/Q> back {}| <Del/D> remove", op_text)
 }
