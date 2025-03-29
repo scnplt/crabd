@@ -124,10 +124,9 @@ impl ContainersTable {
         let horizontal_layout = Layout::horizontal([Constraint::Min(0), Constraint::Length(1)]);
         let [table_area, scrollbar_area] = horizontal_layout.areas(content_area);
 
-        self.row_heights.clear();
-        self.row_heights = render_table(frame, table_area, &self.items, &mut self.state, &self.styles);
-        self.row_heights.pop();
-
+        
+        self.render_table(frame, table_area);
+        
         let content_height = self.row_heights.iter().sum::<usize>();
         self.scrollbar_state = self.scrollbar_state
             .content_length(content_height)
@@ -135,6 +134,53 @@ impl ContainersTable {
 
         render_scrollbar(frame, scrollbar_area, &mut self.scrollbar_state, None);
         render_footer(footer_area, frame.buffer_mut(), get_footer_text(show_all), None, None);
+    }
+
+    fn render_table(&mut self, frame: &mut Frame, area: Rect) {
+        self.row_heights.clear();
+
+        let header = ["ID", "Name", "Image", "State", "Ports"]
+            .into_iter()
+            .map(Cell::from)
+            .collect::<Row>()
+            .style(self.styles.header_style)
+            .height(1);
+    
+        self.row_heights.clear();
+        let rows = self.items.iter().enumerate().map(|(index, data)| {
+            let style = if index % 2 == 0 { self.styles.row_style } else { self.styles.alt_row_style };
+            let item = data.ref_array();
+            let ports: Vec<&str> = data.ports.split("\n").filter(|s| !s.is_empty()).collect();    
+    
+            let height = if ports.is_empty() { 3 } else { ports.len() + 2 };
+            if index < self.items.len() - 1 { self.row_heights.push(height); }
+    
+            item.into_iter()
+                .map(|content| Cell::from(Text::from(format!("\n{content}\n"))))
+                .collect::<Row>()
+                .style(style)
+                .height(height as u16)
+        });
+    
+        let bar = " ● ";
+        let widths = vec![
+            Constraint::Length(12),
+            Constraint::Percentage(20),
+            Constraint::Percentage(30),
+            Constraint::Percentage(10),
+            Constraint::Min(15),
+        ];
+    
+        let table = Table::new(rows,widths)
+            .header(header)
+            .row_highlight_style(self.styles.selected_row_style)
+            .highlight_symbol(Text::from(vec![
+                "".into(),
+                bar.into(),
+            ]))
+            .highlight_spacing(HighlightSpacing::Always);
+    
+        frame.render_stateful_widget(table, area, &mut self.state);
     }
 
     pub fn get_current_container_id(&self) -> String {
@@ -172,51 +218,4 @@ impl ContainersTable {
 fn get_footer_text(show_all: bool) -> String {
     let toggle_text = if show_all { "All" } else { "Running" };
     format!(" <Ent> details | <T> {} | <R> restart | <S> stop | <X> kill | <Del/D> remove", toggle_text)
-}
-
-fn render_table(frame: &mut Frame, area: Rect, items: &[ContainerData], table_state: &mut TableState, styles: &TableStyles) -> Vec<usize> {
-    let header = ["ID", "Name", "Image", "State", "Ports"]
-        .into_iter()
-        .map(Cell::from)
-        .collect::<Row>()
-        .style(styles.header_style)
-        .height(1);
-
-    let mut row_heights: Vec<usize> = vec![];
-    let rows = items.iter().enumerate().map(|(index, data)| {
-        let style = if index % 2 == 0 { styles.row_style } else { styles.alt_row_style };
-        let item = data.ref_array();
-        let ports: Vec<&str> = data.ports.split("\n").filter(|s| !s.is_empty()).collect();    
-
-        let height = if ports.is_empty() { 3 } else { ports.len() + 2 };
-        row_heights.push(height);
-
-        item.into_iter()
-            .map(|content| Cell::from(Text::from(format!("\n{content}\n"))))
-            .collect::<Row>()
-            .style(style)
-            .height(height as u16)
-    });
-
-    let bar = " ● ";
-    let widths = vec![
-        Constraint::Length(12),
-        Constraint::Percentage(20),
-        Constraint::Percentage(30),
-        Constraint::Percentage(10),
-        Constraint::Min(15),
-    ];
-
-    let table = Table::new(rows,widths)
-        .header(header)
-        .row_highlight_style(styles.selected_row_style)
-        .highlight_symbol(Text::from(vec![
-            "".into(),
-            bar.into(),
-        ]))
-        .highlight_spacing(HighlightSpacing::Always);
-
-    frame.render_stateful_widget(table, area, table_state);
-
-    row_heights
 }
