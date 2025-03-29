@@ -134,7 +134,10 @@ impl App {
 
     fn back(&mut self) {
         match self.current_screen {
-            CurrentScreen::Info => self.current_screen = CurrentScreen::List,
+            CurrentScreen::Info => {
+                self.container_info.vertical_scroll = 0;
+                self.current_screen = CurrentScreen::List
+            },
             CurrentScreen::List => self.should_exit = true
         }
     }
