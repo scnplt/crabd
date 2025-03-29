@@ -1,17 +1,30 @@
-# crabd
+# WIP: crabd
 
 ## TODOs
 
 - [ ] Optimize code, reduce code repetition
 - [ ] Add a widget for container creation
 - [ ] Get approval from the user before performing an operation (restart, stop, ...) on the container.
-- [ ] Edit date displays
+- [ ] Edit date format
+
+## Keymap 
+
+| Key | Description |
+|-|-|
+| J | Down |
+| K | Up |
+| Q | Quit/Back |
+| T | Show all/only running |
+| R | Start/Restart |
+| S | Stop |
+| X | Kill |
+| Del/D | Remove |
 
 ## Screenshots
 
-![](./assets/list.png)
-![](./assets/info_status.png)
-![](./assets/info_details.png)
+<img src="./assets/container_table.png" width="700px">
+<img src="./assets/container_info_stopped.png" width="700px">
+<img src="./assets/container_info_running.png" width="700px">
 
 ## License
 
