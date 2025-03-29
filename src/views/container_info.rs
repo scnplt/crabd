@@ -1,4 +1,4 @@
-use std::{cmp::{max, min}, collections::HashMap};
+use std::collections::HashMap;
 
 use bollard::secret::{ContainerInspectResponse, ContainerState, ContainerStateStatusEnum, MountPoint, MountPointTypeEnum, PortBinding};
 use crossterm::event::KeyCode;
@@ -148,7 +148,6 @@ pub struct ContainerInfo {
     vertical_scroll: usize,
     scrollbar_state: ScrollbarState,
     content_length: usize,
-    content_area_size: usize,
 }
 
 impl ContainerInfo {
@@ -161,14 +160,12 @@ impl ContainerInfo {
         let [info_area, scrollbar_area] = horizontal_layout.areas(content_area);
 
         let content_lines = get_content_as_lines(&self.data);
-        self.content_length = content_lines.len();
-        self.content_area_size = content_area.height as usize;
+        self.content_length = content_lines.len().saturating_sub(info_area.height as usize - 2);
 
         render_content(info_area, frame.buffer_mut(), content_lines, self.vertical_scroll, self.data.name.clone());
 
         self.scrollbar_state = self.scrollbar_state
             .content_length(self.content_length)
-            .viewport_content_length(self.content_area_size)
             .position(self.vertical_scroll);
 
         render_scrollbar(frame, scrollbar_area, &mut self.scrollbar_state, None);
@@ -186,12 +183,13 @@ impl ContainerInfo {
     }
 
     fn scroll_down(&mut self) {
-        if self.content_area_size + self.vertical_scroll >= self.content_length { return; }
-        self.vertical_scroll = min(self.content_length, self.vertical_scroll + 1);
+        if self.vertical_scroll == self.content_length { return; }
+        self.vertical_scroll += 1;
     }
 
     fn scroll_up(&mut self) {
-        self.vertical_scroll = max(0, self.vertical_scroll.saturating_sub(1));
+        if self.vertical_scroll == 0 { return; }
+        self.vertical_scroll -= 1;
     }
 }
 
