@@ -28,6 +28,7 @@ pub struct ContainerInfoData {
     pub env: String,
     pub restart_policies: String,
     pub volumes: String,
+    pub labels: String,
 }
 
 impl ContainerInfoData {
@@ -53,6 +54,10 @@ impl ContainerInfoData {
         let entrypoint = config
             .and_then(|c| c.entrypoint.as_ref())
             .map(|e| e.join("\n"))
+            .unwrap_or_else(|| "-".to_string());
+        let labels = config
+            .and_then(|c| c.labels.as_ref())
+            .map(|l| l.iter().map(|(v, d)| format!("{}: {}", v, d)).collect::<Vec<String>>().join("\n"))
             .unwrap_or_else(|| "-".to_string());
 
         let restart_policies = container.host_config.as_ref()
@@ -93,6 +98,7 @@ impl ContainerInfoData {
             env,
             restart_policies,
             volumes: mounts,
+            labels,
         }
     }
 }
@@ -183,13 +189,11 @@ impl ContainerInfo {
     }
 
     fn scroll_down(&mut self) {
-        if self.vertical_scroll == self.content_length { return; }
-        self.vertical_scroll += 1;
+        if self.vertical_scroll != self.content_length { self.vertical_scroll += 1 }
     }
 
     fn scroll_up(&mut self) {
-        if self.vertical_scroll == 0 { return; }
-        self.vertical_scroll -= 1;
+        if self.vertical_scroll != 0 { self.vertical_scroll -= 1 }
     }
 }
 
@@ -213,7 +217,6 @@ fn render_content(area: Rect, buf: &mut Buffer, lines: Vec<Line<'static>>, verti
 }
 
 fn get_content_as_lines(data: &ContainerInfoData) -> Vec<Line<'static>> {
-    let key_style = Style::new().fg(Color::Green);
     let spacer = ("".to_string(), "".to_string());
 
     let mut lines = vec![
@@ -228,26 +231,46 @@ fn get_content_as_lines(data: &ContainerInfoData) -> Vec<Line<'static>> {
         ("Entrypoint: ".to_string(), data.entrypoint.clone()),
         spacer.clone(),
         ("IP Address: ".to_string(), data.ip_address.clone()),
-        ("Port Configs:".to_string(), "".to_string()),
     ];
 
-    let mut ports: Vec<&str> = data.port_configs.split("\n").filter(|p| !p.is_empty()).collect();
-    ports.sort_unstable();
-    lines.extend(ports.iter().map(|port| ("".to_string(), format!(" - {}", port))));
+    if let Some(ports) = get_filtered_list(&data.port_configs) {
+        lines.extend(vec![spacer.clone(), ("Port Configs:".to_string(), "".to_string())]);
+        lines.extend(ports);
+    }
 
-    lines.extend(vec![spacer.clone(), ("Volumes:".to_string(), "".to_string())]);
-    let mut volumes: Vec<&str> = data.volumes.split("\n").collect();
-    volumes.sort_unstable();
-    lines.extend(volumes.iter().map(|volume| ("".to_string(), format!(" - {}", volume))));
+    if let Some(volumes) = get_filtered_list(&data.volumes) {
+        lines.extend(vec![spacer.clone(), ("Volumes:".to_string(), "".to_string())]);
+        lines.extend(volumes);
+    }
 
-    lines.extend(vec![spacer.clone(), ("Env:".to_string(), "".to_string())]);
-    let mut env: Vec<&str> = data.env.split("\n").collect();
-    env.sort_unstable();
-    lines.extend(env.iter().map(|e| ("".to_string(), format!(" - {}", e))));
+    if let Some(env) = get_filtered_list(&data.env) {
+        lines.extend(vec![spacer.clone(), ("Env:".to_string(), "".to_string())]);
+        lines.extend(env);
+    }
+
+    if let Some(labels) = get_filtered_list(&data.labels) {
+        lines.extend(vec![spacer.clone(), ("Labels:".to_string(), "".to_string())]);
+        lines.extend(labels);
+    }
+
+    let key_style = Style::new().fg(Color::Green);
 
     lines.into_iter()
+        .filter(|(_, content)| !content.eq("-"))
         .map(|(key, content)| Line::from_iter([key.set_style(key_style), content.into()]))
         .collect()
+}
+
+fn get_filtered_list(data: &str) -> Option<Vec<(String, String)>> {
+    let mut splitted_data: Vec<String> = data.split("\n")
+        .filter(|p| !p.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+
+    if splitted_data.is_empty() { return None; }
+
+    splitted_data.sort_unstable();
+    Some(splitted_data.iter().map(|d| ("".to_string(), format!(" - {}", d))).collect())
 }
 
 fn get_footer_text(is_running: bool) -> String {
