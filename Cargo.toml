@@ -1,6 +1,6 @@
 [package]
 name = "crabd"
-version = "0.1.0"
+version = "0.1.0-beta1"
 authors = ["Sertan Canpolat <58915038+scnplt@users.noreply.github.com>"]
 license = "Apache-2.0"
 edition = "2024"
