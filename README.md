@@ -1,13 +1,26 @@
-# WIP: crabd
+# crabd
 
 ![](./assets/crabd.gif)
 
-## TODOs
+## Installation
 
-- [ ] Optimize code, reduce code repetition
-- [ ] Add a widget for container creation
-- [ ] Get approval from the user before performing an operation (restart, stop, ...) on the container.
-- [ ] Edit date format
+With prebuild binary file:
+```bash
+curl -sL "https://github.com/scnplt/crabd/releases/download/v0.1.0-beta.1/linux-crabd.tar.gz" | tar xz && \
+sudo mv crabd /usr/bin/ && sudo chmod +x /usr/bin/crabd
+
+# Run
+crabd
+```
+
+Or build from source:
+```bash
+git clone https://github.com/scnplt/crabd.git && cd crabd
+cargo build --release --target=x86_64-unknown-linux-musl
+
+# Run
+./target/x86_64-unknown-linux-musl/release/crabd
+```
 
 ## Keymap 
 
@@ -21,12 +34,6 @@
 | S | Stop |
 | X | Kill |
 | Del/D | Remove |
-
-## Screenshots
-
-<img src="./assets/container_table.png" width="700px">
-<img src="./assets/container_info_stopped.png" width="700px">
-<img src="./assets/container_info_running.png" width="700px">
 
 ## License
 
