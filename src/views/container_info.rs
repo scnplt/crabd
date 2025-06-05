@@ -57,7 +57,7 @@ impl ContainerInfoData {
             .unwrap_or_else(|| "-".to_string());
         let labels = config
             .and_then(|c| c.labels.as_ref())
-            .map(|l| l.iter().map(|(v, d)| format!("{}: {}", v, d)).collect::<Vec<String>>().join("\n"))
+            .map(get_formatted_labels)
             .unwrap_or_else(|| "-".to_string());
 
         let restart_policies = container.host_config.as_ref()
@@ -101,6 +101,18 @@ impl ContainerInfoData {
             labels,
         }
     }
+}
+
+fn get_formatted_labels(labels: &HashMap<String, String>) -> String {
+    labels.iter()
+        .filter(|line| !is_system_line(line))
+        .map(|(label, value)| format!("{}: {}", label, value))
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
+fn is_system_line((label, _): &(&String, &String)) -> bool {
+    label.starts_with("org") || label.starts_with("com")
 }
 
 fn get_ports_text(ports: &HashMap<String, Option<Vec<PortBinding>>>) -> String {
@@ -249,7 +261,7 @@ fn get_content_as_lines(data: &ContainerInfoData) -> Vec<Line<'static>> {
     }
 
     if let Some(labels) = get_filtered_list(&data.labels) {
-        lines.extend(vec![spacer.clone(), ("Labels:".to_string(), "".to_string())]);
+        lines.extend(vec![spacer.clone(), ("Labels (Some system labels are hidden!):".to_string(), "".to_string())]);
         lines.extend(labels);
     }
 
