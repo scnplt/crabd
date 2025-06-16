@@ -4,16 +4,23 @@
 
 ## Installation
 
-With prebuild binary file (Before running the command, **replace *RELEASE_VERSION*** with the version you want to use):
-```bash
-curl -sL "https://github.com/scnplt/crabd/releases/download/RELEASE_VERSION/linux-crabd.tar.gz" | tar xz && \
-sudo mv crabd /usr/bin/ && sudo chmod +x /usr/bin/crabd
+### With prebuild binary file:
 
-# Run
-crabd
+Download the prebuild binary file and make it executable:
+
+```bash
+# Replace v0.1.0-beta.3 with the version you want to install
+curl -L https://github.com/scnplt/crabd/releases/download/v0.1.0-beta.3/crabd -o crabd && chmod +x crabd
 ```
 
-Or build from source:
+Run:
+
+```bash
+./crabd
+```
+
+###  Or build from source:
+
 ```bash
 git clone https://github.com/scnplt/crabd.git && cd crabd
 cargo build --release --target=x86_64-unknown-linux-musl
