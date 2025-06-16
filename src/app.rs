@@ -144,7 +144,8 @@ impl App {
 
     fn go_to_info_screen(&mut self) {
         if self.current_screen == CurrentScreen::List {
-            self.current_screen = CurrentScreen::Info
+            self.current_screen = CurrentScreen::Info;
+            self.container_info.reset_scroll_state();
         }
     }
 

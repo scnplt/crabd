@@ -7,7 +7,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect}, 
     style::{palette::tailwind, Color, Style, Styled, Stylize}, 
     text::Line, 
-    widgets::{Block, BorderType, Paragraph, ScrollbarState, Widget, Wrap}, 
+    widgets::{Block, BorderType, Paragraph, ScrollbarState, Widget}, 
     Frame
 };
 
@@ -152,29 +152,53 @@ fn get_mounts_text(mount_points: &[MountPoint]) -> String {
 pub struct ContainerInfo {
     pub data: ContainerInfoData,
     pub vertical_scroll: usize,
-    scrollbar_state: ScrollbarState,
+    pub horizontal_scroll: usize,
+    vertical_scrollbar_state: ScrollbarState,
+    horizontal_scrollbar_state: ScrollbarState,
     content_length: usize,
+    longest_line: usize,
 }
 
 impl ContainerInfo {
     
     pub fn draw(&mut self, frame: &mut Frame) {
-        let vertical_layout = Layout::vertical([Constraint::Min(0), Constraint::Length(3)]);
-        let [content_area, footer_area] = vertical_layout.areas(frame.area());
+        self.longest_line = 0;
+
+        let vertical_layout = Layout::vertical([Constraint::Min(0), Constraint::Length(1), Constraint::Length(3)]);
+        let [content_area, horizontal_scrollbar_area, footer_area] = vertical_layout.areas(frame.area());
 
         let horizontal_layout = Layout::horizontal([Constraint::Min(0), Constraint::Length(1)]);
-        let [info_area, scrollbar_area] = horizontal_layout.areas(content_area);
+        let [info_area, vertical_scrollbar_area] = horizontal_layout.areas(content_area);
 
         let content_lines = get_content_as_lines(&self.data);
+        content_lines.iter().for_each(|line| {
+            let line_len = line.to_string().len();
+            if line_len > self.longest_line { self.longest_line = line_len; }
+        });
+
         self.content_length = content_lines.len().saturating_sub(info_area.height as usize - 2);
+        self.longest_line = self.longest_line.saturating_sub(info_area.width as usize - 2);
 
-        render_content(info_area, frame.buffer_mut(), content_lines, self.vertical_scroll, self.data.name.clone());
+        render_content(
+            info_area, 
+            frame.buffer_mut(), 
+            content_lines, 
+            self.vertical_scroll, 
+            self.horizontal_scroll,
+            self.data.name.clone()
+        );
 
-        self.scrollbar_state = self.scrollbar_state
+        self.vertical_scrollbar_state = self.vertical_scrollbar_state
             .content_length(self.content_length)
             .position(self.vertical_scroll);
 
-        render_scrollbar(frame, scrollbar_area, &mut self.scrollbar_state, None);
+        render_scrollbar(frame, vertical_scrollbar_area, &mut self.vertical_scrollbar_state, true);
+
+        self.horizontal_scrollbar_state = self.horizontal_scrollbar_state
+            .content_length(self.longest_line)
+            .position(self.horizontal_scroll);
+
+        render_scrollbar(frame, horizontal_scrollbar_area, &mut self.horizontal_scrollbar_state, false);
 
         let is_running = self.data.state == "running";
         render_footer(footer_area, frame.buffer_mut(), get_footer_text(is_running), None, None);
@@ -184,6 +208,8 @@ impl ContainerInfo {
         match code {
             KeyCode::Up | KeyCode::Char('k') => self.scroll_up(),
             KeyCode::Down | KeyCode::Char('j') => self.scroll_down(),
+            KeyCode::Right | KeyCode::Char('l') => self.scroll_right(),
+            KeyCode::Left | KeyCode::Char('h') => self.scroll_left(),
             _ => {}
         };
     }
@@ -195,9 +221,29 @@ impl ContainerInfo {
     fn scroll_up(&mut self) {
         if self.vertical_scroll != 0 { self.vertical_scroll -= 1 }
     }
+
+    fn scroll_right(&mut self) {
+        if self.horizontal_scroll != self.longest_line { self.horizontal_scroll += 1; }
+    }
+
+    fn scroll_left(&mut self) {
+        if self.horizontal_scroll != 0 { self.horizontal_scroll -= 1; }
+    }
+
+    pub fn reset_scroll_state(&mut self) {
+        self.vertical_scroll = 0;
+        self.horizontal_scroll = 0;
+    }
 }
 
-fn render_content(area: Rect, buf: &mut Buffer, lines: Vec<Line<'static>>, vertical_scroll: usize, container_name: String) {
+fn render_content(
+    area: Rect, 
+    buf: &mut Buffer, 
+    lines: Vec<Line<'static>>, 
+    vertical_scroll: usize,
+    horizontal_scroll: usize,
+    container_name: String
+) {
     let block_style = Style::new().fg(tailwind::BLUE.c400);
 
     let title = Line::from(format!("Container: {}", container_name))
@@ -209,9 +255,8 @@ fn render_content(area: Rect, buf: &mut Buffer, lines: Vec<Line<'static>>, verti
         .title(title);
 
     Paragraph::new(lines)
-        .wrap(Wrap { trim: true })
         .block(block)
-        .scroll((vertical_scroll as u16, 0))
+        .scroll((vertical_scroll as u16, horizontal_scroll as u16))
         .left_aligned()
         .render(area, buf);
 }

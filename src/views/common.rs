@@ -6,13 +6,19 @@ use ratatui::{
     Frame
 };
 
-pub fn render_scrollbar(frame: &mut Frame, area: Rect, state: &mut ScrollbarState, style: Option<Style>) {
-    let scrollbar_style = style.unwrap_or(Style::default().fg(tailwind::BLUE.c900));
-    
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(Some("^"))
-        .end_symbol(Some("v"))
-        .style(scrollbar_style);
+pub fn render_scrollbar(frame: &mut Frame, area: Rect, state: &mut ScrollbarState, is_vertical: bool) {
+    let (orientation, begin_symbol, end_symbol, track_symbol, thumb_symbol) = if is_vertical {
+        (ScrollbarOrientation::VerticalRight, Some("^"), Some("v"), Some("│"), "█")
+    } else {
+        (ScrollbarOrientation::HorizontalBottom, Some("<"), Some(">"), Some("─"), "■")
+    };
+
+    let scrollbar = Scrollbar::new(orientation)
+        .begin_symbol(begin_symbol)
+        .end_symbol(end_symbol)
+        .track_symbol(track_symbol)
+        .thumb_symbol(thumb_symbol)
+        .style(Style::default().fg(tailwind::BLUE.c900));
 
     frame.render_stateful_widget(scrollbar, area, state);
 }
