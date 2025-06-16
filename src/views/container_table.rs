@@ -132,7 +132,7 @@ impl ContainersTable {
             .content_length(content_height)
             .position(self.vertical_scroll);
 
-        render_scrollbar(frame, scrollbar_area, &mut self.scrollbar_state, None);
+        render_scrollbar(frame, scrollbar_area, &mut self.scrollbar_state, true);
 
         let footer_text = get_footer_text(show_all, self.is_selected_container_running());
         render_footer(footer_area, frame.buffer_mut(), footer_text, None, None);
