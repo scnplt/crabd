@@ -1,38 +1,31 @@
 use std::collections::HashMap;
+use crate::{app::Screen, components::component::Component, event::AppEvent, utils::is_container_running};
 
+use super::common::{render_scrollbar, render_footer};
+use color_eyre::eyre::Result;
 use bollard::secret::{ContainerInspectResponse, ContainerState, ContainerStateStatusEnum, MountPoint, MountPointTypeEnum, PortBinding};
-use crossterm::event::KeyCode;
-use ratatui::{
-    buffer::Buffer, 
-    layout::{Constraint, Layout, Rect}, 
-    style::{palette::tailwind, Color, Style, Styled, Stylize}, 
-    text::Line, 
-    widgets::{Block, BorderType, Paragraph, ScrollbarState, Widget}, 
-    Frame
-};
-
-use super::common::{render_footer, render_scrollbar};
+use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::{layout::{Constraint, Layout, Rect}, style::{palette::tailwind, Color, Style, Styled, Stylize}, text::Line, widgets::{Block, BorderType, Paragraph, ScrollbarState}, Frame};
 
 #[derive(Default, Clone)]
-pub struct ContainerInfoData {
-    pub id: String,
-    pub name: String,
-    pub image: String,
-    pub created: String,
-    pub state: String,
-    pub ip_address: String,
-    pub start_time: String,
-    pub port_configs: String,
-    pub cmd: String,
-    pub entrypoint: String,
-    pub env: String,
-    pub restart_policies: String,
-    pub volumes: String,
-    pub labels: String,
+pub struct ContainerData {
+    id: String,
+    name: String,
+    image: String,
+    created: String,
+    state: String,
+    ip_address: String,
+    start_time: String,
+    port_configs: String,
+    cmd: String,
+    entrypoint: String,
+    env: String,
+    restart_policy: String,
+    volumes: String,
+    labels: String
 }
 
-impl ContainerInfoData {
-    
+impl ContainerData {
     pub fn from(container: ContainerInspectResponse) -> Self {
         let name = container.name.as_deref()
             .and_then(|name| name.strip_prefix("/"))
@@ -60,7 +53,7 @@ impl ContainerInfoData {
             .map(|l| l.iter().map(|(v, d)| format!("{}: {}", v, d)).collect::<Vec<String>>().join("\n"))
             .unwrap_or_else(|| "-".to_string());
 
-        let restart_policies = container.host_config.as_ref()
+        let restart_policy = container.host_config.as_ref()
             .and_then(|c| c.restart_policy.as_ref())
             .and_then(|c| c.name)
             .map(|name| format!("{:?}", name).to_lowercase().replace("_", "-"))
@@ -96,7 +89,7 @@ impl ContainerInfoData {
             cmd,
             entrypoint,
             env,
-            restart_policies,
+            restart_policy,
             volumes: mounts,
             labels,
         }
@@ -149,39 +142,77 @@ fn get_mounts_text(mount_points: &[MountPoint]) -> String {
 }
 
 #[derive(Default)]
-pub struct ContainerInfo {
-    pub data: ContainerInfoData,
-    pub vertical_scroll: usize,
-    pub horizontal_scroll: usize,
+pub struct ContainerInfoBlock {
+    data: ContainerData,
+    vertical_scroll: usize,
+    horizontal_scroll: usize,
     vertical_scrollbar_state: ScrollbarState,
     horizontal_scrollbar_state: ScrollbarState,
-    content_length: usize,
+    line_heights: usize,
     longest_line: usize,
+    skipped_tick_count_for_refresh: u8,
 }
 
-impl ContainerInfo {
-    
-    pub fn draw(&mut self, frame: &mut Frame) {
-        self.longest_line = 0;
+impl Component for ContainerInfoBlock {
+    fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<Option<AppEvent>> {
+        let mut event = None;
+        match key_event.code {
+            KeyCode::Esc | KeyCode::Char('q') => event = Some(AppEvent::Back),
+            KeyCode::Up | KeyCode::Char('k') => self.scroll_up(),
+            KeyCode::Down | KeyCode::Char('j') => self.scroll_down(),
+            KeyCode::Right | KeyCode::Char('l') => self.scroll_right(),
+            KeyCode::Left | KeyCode::Char('h') => self.scroll_left(),
+            KeyCode::Delete | KeyCode::Char('d') => {
+                event = Some(AppEvent::RemoveContainer(self.data.id.clone()))
+            }
+            KeyCode::Char(c) => {
+                let container_id = self.data.id.clone();
+                event = match c {
+                    'r' => Some(AppEvent::RestartContainer(container_id)),
+                    's' => Some(AppEvent::StopContainer(container_id)),
+                    'x' => Some(AppEvent::KillContainer(container_id)),
+                    _ => None
+                }
+            }
+            _ => {}
+        }
+        Ok(event)
+    }
 
+    fn tick(&mut self) -> Result<Option<AppEvent>> {
+        let mut event = None;
+        if self.skipped_tick_count_for_refresh > 10 {
+            self.skipped_tick_count_for_refresh = 0;
+            event = Some(AppEvent::UpdateContainerInfo(self.data.id.clone()))
+        } else {
+            self.skipped_tick_count_for_refresh += 1;
+        }
+        Ok(event)
+    }
+
+    fn is_showing(&self, screen: &Screen) -> bool {
+        screen.eq(&Screen::ContainerInfo)
+    }
+    
+    fn draw(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
         let vertical_layout = Layout::vertical([Constraint::Min(0), Constraint::Length(1), Constraint::Length(3)]);
-        let [content_area, horizontal_scrollbar_area, footer_area] = vertical_layout.areas(frame.area());
+        let [content_area, horizontal_scrollbar_area, footer_area] = vertical_layout.areas(area);
 
         let horizontal_layout = Layout::horizontal([Constraint::Min(0), Constraint::Length(1)]);
         let [info_area, vertical_scrollbar_area] = horizontal_layout.areas(content_area);
 
+        self.longest_line = 0;
         let content_lines = get_content_as_lines(&self.data);
         content_lines.iter().for_each(|line| {
             let line_len = line.to_string().len();
-            if line_len > self.longest_line { self.longest_line = line_len; }
+            if line_len > self.longest_line { self.longest_line = line_len }
         });
-
-        self.content_length = content_lines.len().saturating_sub(info_area.height as usize - 2);
         self.longest_line = self.longest_line.saturating_sub(info_area.width as usize - 2);
+        self.line_heights = content_lines.len().saturating_sub(info_area.height as usize - 2);
 
         render_content(
-            info_area, 
-            frame.buffer_mut(), 
+            frame,
+            info_area,
             content_lines, 
             self.vertical_scroll, 
             self.horizontal_scroll,
@@ -189,56 +220,28 @@ impl ContainerInfo {
         );
 
         self.vertical_scrollbar_state = self.vertical_scrollbar_state
-            .content_length(self.content_length)
+            .content_length(self.line_heights)
             .position(self.vertical_scroll);
-
         render_scrollbar(frame, vertical_scrollbar_area, &mut self.vertical_scrollbar_state, true);
 
         self.horizontal_scrollbar_state = self.horizontal_scrollbar_state
             .content_length(self.longest_line)
             .position(self.horizontal_scroll);
-
         render_scrollbar(frame, horizontal_scrollbar_area, &mut self.horizontal_scrollbar_state, false);
 
-        let is_running = self.data.state == "running";
-        render_footer(footer_area, frame.buffer_mut(), get_footer_text(is_running), None, None);
+        render_footer(frame, footer_area, get_footer_text(is_container_running(&self.data.state)));
+
+        Ok(())
     }
 
-    pub fn handle_key_event(&mut self, code: KeyCode) {
-        match code {
-            KeyCode::Up | KeyCode::Char('k') => self.scroll_up(),
-            KeyCode::Down | KeyCode::Char('j') => self.scroll_down(),
-            KeyCode::Right | KeyCode::Char('l') => self.scroll_right(),
-            KeyCode::Left | KeyCode::Char('h') => self.scroll_left(),
-            _ => {}
-        };
-    }
-
-    fn scroll_down(&mut self) {
-        if self.vertical_scroll != self.content_length { self.vertical_scroll += 1 }
-    }
-
-    fn scroll_up(&mut self) {
-        if self.vertical_scroll != 0 { self.vertical_scroll -= 1 }
-    }
-
-    fn scroll_right(&mut self) {
-        if self.horizontal_scroll != self.longest_line { self.horizontal_scroll += 1; }
-    }
-
-    fn scroll_left(&mut self) {
-        if self.horizontal_scroll != 0 { self.horizontal_scroll -= 1; }
-    }
-
-    pub fn reset_scroll_state(&mut self) {
-        self.vertical_scroll = 0;
-        self.horizontal_scroll = 0;
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }
 
 fn render_content(
-    area: Rect, 
-    buf: &mut Buffer, 
+    frame: &mut Frame,
+    area: Rect,
     lines: Vec<Line<'static>>, 
     vertical_scroll: usize,
     horizontal_scroll: usize,
@@ -254,14 +257,15 @@ fn render_content(
         .border_style(block_style)
         .title(title);
 
-    Paragraph::new(lines)
+    let paragraph = Paragraph::new(lines)
         .block(block)
         .scroll((vertical_scroll as u16, horizontal_scroll as u16))
-        .left_aligned()
-        .render(area, buf);
+        .left_aligned();
+
+    frame.render_widget(paragraph, area);
 }
 
-fn get_content_as_lines(data: &ContainerInfoData) -> Vec<Line<'static>> {
+fn get_content_as_lines(data: &ContainerData) -> Vec<Line<'static>> {
     let spacer = ("".to_string(), "".to_string());
 
     let mut lines = vec![
@@ -269,14 +273,16 @@ fn get_content_as_lines(data: &ContainerInfoData) -> Vec<Line<'static>> {
         ("Image: ".to_string(), data.image.clone()),
         ("Created: ".to_string(), data.created.clone()),
         ("Start Time: ".to_string(), data.start_time.clone()),
-        ("Restart Policies: ".to_string(), data.restart_policies.clone()),
+        ("Restart Policy: ".to_string(), data.restart_policy.clone()),
         ("State: ".to_string(), data.state.clone()),
         spacer.clone(),
         ("CMD: ".to_string(), data.cmd.clone()),
         ("Entrypoint: ".to_string(), data.entrypoint.clone()),
-        spacer.clone(),
-        ("IP Address: ".to_string(), data.ip_address.clone()),
     ];
+
+    if !data.ip_address.is_empty() {
+        lines.extend(vec![spacer.clone(), ("IP Address: ".to_string(), data.ip_address.clone())]);
+    }
 
     if let Some(ports) = get_filtered_list(&data.port_configs) {
         lines.extend(vec![spacer.clone(), ("Port Configs:".to_string(), "".to_string())]);
@@ -321,4 +327,26 @@ fn get_filtered_list(data: &str) -> Option<Vec<(String, String)>> {
 fn get_footer_text(is_running: bool) -> String {
     let op_text = if is_running { "| <R> restart | <S> stop | <X> kill " } else { "| <R> start " };
     format!(" <Esc/Q> back {}| <Del/D> remove", op_text)
+}
+
+impl ContainerInfoBlock {
+    pub fn update_data(&mut self, data: ContainerData) {
+        self.data = data;
+    }
+
+    fn scroll_down(&mut self) {
+        if self.vertical_scroll != self.line_heights { self.vertical_scroll += 1 }
+    }
+
+    fn scroll_up(&mut self) {
+        if self.vertical_scroll != 0 { self.vertical_scroll -= 1 }
+    }
+
+    fn scroll_right(&mut self) {
+        if self.horizontal_scroll != self.longest_line { self.horizontal_scroll += 1; }
+    }
+
+    fn scroll_left(&mut self) {
+        if self.horizontal_scroll != 0 { self.horizontal_scroll -= 1; }
+    }
 }

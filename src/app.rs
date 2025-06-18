@@ -1,176 +1,156 @@
-use crate::{
-    docker::client::DockerClient, 
-    views::{container_info::{ContainerInfo, ContainerInfoData}, 
-    container_table::{ContainerData, ContainersTable}}
+use crate::components::component::Component;
+use crate::components::container_info::{ContainerData, ContainerInfoBlock};
+use crate::components::container_table::{ContainerTable, ContainerTableRow};
+use crate::docker::client::DockerClient;
+use crate::event::{AppEvent, Event, EventHandler};
+use color_eyre::eyre::Result;
+use ratatui::{
+    DefaultTerminal,
+    crossterm::event::{Event::Key, KeyCode, KeyEvent, KeyModifiers},
 };
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent};
-use tokio::sync::mpsc::Receiver;
-use std::{io, sync::{Arc, Mutex}, time::Duration};
-use bollard::secret::ContainerSummary;
-use ratatui::DefaultTerminal;
- 
 #[derive(PartialEq)]
-pub enum CurrentScreen {
-    List,
-    Info,
-}
-
-#[derive(PartialEq)]
-enum NextOperation {
-    None,
-    Restart,
-    Stop,
-    Kill,
-    Remove,
+pub enum Screen {
+    ContainerList,
+    ContainerInfo,
 }
 
 pub struct App {
-    pub current_screen: CurrentScreen,
-    pub should_exit: bool,
-    pub show_all: bool,
-    containers_table: ContainersTable,
-    container_info: ContainerInfo,
-    docker: DockerClient,
-    next_operation: NextOperation,
-    selected_container_id: String,
+    running: bool,
+    events: EventHandler,
+    components: Vec<Box<dyn Component>>,
+    docker_client: DockerClient,
+    current_screen: Screen,
 }
 
 impl App {
-
-    pub async fn new(client: DockerClient, containers: Arc<Mutex<Vec<ContainerSummary>>>) -> Self {
-        let show_all = true;
-        let containers_data: Vec<ContainerData> = ContainerData::from_list(containers.lock().unwrap().to_vec(), show_all);
-        let mut first_container_id = "-1".to_string();
-
-        if let Some(container) = containers_data.first() {
-            first_container_id = container.id.clone()
-        }
-
-        Self {
-            current_screen: CurrentScreen::List,
-            should_exit: false,
-            show_all,
-            containers_table: ContainersTable::new(containers_data),
-            container_info: ContainerInfo::default(),
-            docker: client,
-            next_operation: NextOperation::None,
-            selected_container_id: first_container_id,
-        }
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            running: true,
+            events: EventHandler::new(),
+            components: vec![Box::new(ContainerTable::default())],
+            docker_client: DockerClient::new()?,
+            current_screen: Screen::ContainerList,
+        })
     }
 
-    pub async fn run(&mut self, terminal: &mut DefaultTerminal, rx: &mut Receiver<Vec<ContainerSummary>>) -> io::Result<()> {
-        while !self.should_exit {
-            match self.current_screen {
-                CurrentScreen::List => self.draw_containers_table(terminal, rx),
-                CurrentScreen::Info => self.draw_container_info(terminal).await
-            }
-            
-            self.handle_events()?;
-            self.handle_container_operations().await;
+    pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+        while self.running {
+            terminal.draw(|frame| {
+                self.components.iter_mut()
+                    .filter(|c| c.is_showing(&self.current_screen))
+                    .for_each(|c| c.draw(frame, frame.area()).unwrap());
+            })?;
+
+            self.process_next_event().await?;
         }
         Ok(())
     }
 
-    fn draw_containers_table(&mut self, terminal: &mut DefaultTerminal, rx: &mut Receiver<Vec<ContainerSummary>>) {
-        terminal.draw(|frame| self.containers_table.draw(frame, self.show_all)).unwrap();
-        if let Ok(result) = rx.try_recv() {
-            self.containers_table.items = ContainerData::from_list(result, self.show_all);
-        }
-    }
-    
-    async fn draw_container_info(&mut self, terminal: &mut DefaultTerminal) {
-        self.update_selected_container_id();
-        let data = self.docker.inspect_container(&self.selected_container_id).await;
-        if let Ok(info) = data {
-            self.container_info.data = ContainerInfoData::from(info);
-            terminal.draw(|frame| self.container_info.draw(frame)).unwrap();
-        }
-    }
-
-    async fn handle_container_operations(&mut self) {
-        let result: Result<_, _> = match self.next_operation {
-            NextOperation::Restart => self.docker.restart_container(&self.selected_container_id).await,
-            NextOperation::Stop => self.docker.stop_container(&self.selected_container_id).await,
-            NextOperation::Kill => self.docker.kill_container(&self.selected_container_id).await,
-            NextOperation::Remove => {
-                self.current_screen = CurrentScreen::List;
-                self.docker.remove_container(&self.selected_container_id).await
+    // Since different screens will be added,
+    // key handling for container operations is done in the component, not in the application.
+    async fn process_next_event(&mut self) -> Result<()> {
+        match self.events.next().await? {
+            Event::Tick => self.tick(),
+            Event::Crossterm(event) => {
+                if let Key(key_event) = event { 
+                    self.handle_key_events(key_event)?
+                }
             },
-            _ => Err("Pass".into())
-        };
-        
-        if result.is_ok() { self.next_operation = NextOperation::None; }
-    }
-
-    fn handle_events(&mut self) -> io::Result<()> {
-        if crossterm::event::poll(Duration::from_millis(50))? {
-            if let Event::Key(KeyEvent { code, ..}) = event::read()? {
-                self.handle_key_event(code);
-            }
+            Event::App(app_event) => match app_event {
+                AppEvent::Quit => self.quit(),
+                AppEvent::UpdateContainers => self.update_containers().await?,
+                AppEvent::UpdateContainerInfo(id) => self.update_container_details(id).await?,
+                AppEvent::RestartContainer(id) => self.docker_client.restart_container(&id).await?,
+                AppEvent::StopContainer(id) => self.docker_client.stop_container(&id).await?,
+                AppEvent::KillContainer(id) => self.docker_client.kill_container(&id).await?,
+                AppEvent::RemoveContainer(id) => {
+                    self.go_back_from_container_details();
+                    self.docker_client.remove_container(&id).await?
+                },
+                AppEvent::GoToDetails(id) => self.go_to_container_info(id).await?,
+                AppEvent::Back => self.go_back_from_container_details(),
+            },
         }
         Ok(())
     }
 
-    fn handle_key_event(&mut self, code: KeyCode) {
-        if self.next_operation != NextOperation::None { return; }
-
-        match self.current_screen {
-            CurrentScreen::Info => self.container_info.handle_key_event(code),
-            CurrentScreen::List => self.containers_table.handle_key_event(code),
-        }
-        
-        match code {
-            KeyCode::Esc | KeyCode::Char('q') => self.back(),
-            KeyCode::Enter => self.go_to_info_screen(),
-            KeyCode::Char('t') => self.show_all = !self.show_all,
-            KeyCode::Char('r') => self.restart_container(),
-            KeyCode::Char('s') => self.stop_container(),
-            KeyCode::Char('x') => self.kill_container(),
-            KeyCode::Delete | KeyCode::Char('d') => self.remove_container(),
-            _ => {}
+    fn go_back_from_container_details(&mut self) {
+        if self.current_screen == Screen::ContainerInfo {
+            self.components.pop();
+            self.current_screen = Screen::ContainerList
         }
     }
 
-    fn back(&mut self) {
-        match self.current_screen {
-            CurrentScreen::Info => {
-                self.container_info.vertical_scroll = 0;
-                self.current_screen = CurrentScreen::List
+    fn handle_key_events(&mut self, key_event: KeyEvent) -> Result<()> {
+        match key_event.code {
+            KeyCode::Char('c' | 'C') if key_event.modifiers == KeyModifiers::CONTROL => {
+                self.events.send(AppEvent::Quit)
+            }
+            _ => {
+                self.components.iter_mut()
+                    .filter(|c| c.is_showing(&self.current_screen))
+                    .for_each(|c| {
+                        if let Some(event) = c.handle_key_event(key_event).unwrap() {
+                            self.events.send(event);
+                        }
+                    });
             },
-            CurrentScreen::List => self.should_exit = true
         }
+        Ok(())
     }
 
-    fn go_to_info_screen(&mut self) {
-        if self.current_screen == CurrentScreen::List {
-            self.current_screen = CurrentScreen::Info;
-            self.container_info.reset_scroll_state();
+    async fn go_to_container_info(&mut self, container_id: String) -> Result<()> {
+        if let Some(data) = self.get_container_data(container_id).await {
+            let mut container_info_block = ContainerInfoBlock::default();
+            container_info_block.update_data(data);
+            self.components.push(Box::new(container_info_block));
+            self.current_screen = Screen::ContainerInfo;
         }
+        Ok(())
     }
 
-    fn restart_container(&mut self) {
-        self.update_selected_container_id();
-        self.next_operation = NextOperation::Restart;
+    fn tick(&mut self) {
+        self.components.iter_mut().for_each(|c| {
+            if let Some(event) = c.tick().unwrap() {
+                self.events.send(event);
+            }
+        });
     }
 
-    fn stop_container(&mut self) {
-        self.update_selected_container_id();
-        self.next_operation = NextOperation::Stop;
+    fn quit(&mut self) {
+        self.running = false;
     }
 
-    fn kill_container(&mut self) {
-        self.update_selected_container_id();
-        self.next_operation = NextOperation::Kill;
+    async fn get_container_data(&self, container_id: String) -> Option<ContainerData> {
+        if let Ok(data) = self.docker_client.inspect_container(&container_id).await {
+            return Some(ContainerData::from(data))
+        }
+        None
     }
 
-    fn remove_container(&mut self) {
-        self.update_selected_container_id();
-        self.next_operation = NextOperation::Remove;
+    async fn update_container_details(&mut self, container_id: String) -> Result<()> {
+        if self.current_screen != Screen::ContainerInfo { return Ok(()) }
+
+        if let Some(data) = self.get_container_data(container_id).await {
+            self.components.iter_mut()
+                .find_map(|c| c.as_any_mut().downcast_mut::<ContainerInfoBlock>()).unwrap()
+                .update_data(data);
+        }
+
+        Ok(())
     }
 
-    fn update_selected_container_id(&mut self) {
-        let container_id = self.containers_table.get_current_container_id();
-        self.selected_container_id = container_id;
+    async fn update_containers(&mut self) -> Result<()> {
+        if self.current_screen != Screen::ContainerList { return Ok(()) }
+
+        if let Ok(result) = self.docker_client.list_containers().await {
+            let containers = ContainerTableRow::from_list(result);
+            self.components.iter_mut()
+                .find_map(|c| c.as_any_mut().downcast_mut::<ContainerTable>()).unwrap()
+                .update_with_items(containers);
+        }
+
+        Ok(()) 
     }
 }
