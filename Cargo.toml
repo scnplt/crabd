@@ -11,4 +11,6 @@ color-eyre = "0.6.5"
 crossterm = { version = "0.28.1", features = ["event-stream"] }
 futures = "0.3.31"
 ratatui = "0.29.0"
+strum = "0.27.1"
+strum_macros = "0.27.1"
 tokio = {version = "1.44.2", features = ["full"]}
