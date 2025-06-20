@@ -99,7 +99,7 @@ impl ContainerTable {
             .map(|c| is_container_running(&c.state));
 
         let footer_text = get_footer_text(self.show_all, is_selected_container_running);
-        render_footer(frame, footer_area, footer_text);
+        render_footer(frame, footer_area, footer_text, None);
 
         // If there is items but no row selected, select the first row.
         // This happens when changing the `self.show_all` parameter.

@@ -5,7 +5,7 @@ use bollard::container::{
 };
 use bollard::models::ContainerSummary;
 use bollard::secret::{ContainerInspectResponse, VolumeListResponse};
-use bollard::volume::ListVolumesOptions;
+use bollard::volume::{ListVolumesOptions, RemoveVolumeOptions};
 use color_eyre::eyre::Result;
 
 #[derive(Clone)]
@@ -73,5 +73,9 @@ impl DockerClient {
 
     pub async fn list_volumes(&self) -> Result<VolumeListResponse> {
         Ok(self.client.list_volumes(Some(ListVolumesOptions::<String>::default())).await?)
+    }
+
+    pub async fn remove_volume(&self, name: &str, force: bool) -> Result<()> {
+        Ok(self.client.remove_volume(name, Some(RemoveVolumeOptions { force })).await?)
     }
 }
