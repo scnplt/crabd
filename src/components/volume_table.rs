@@ -13,7 +13,7 @@ use crate::{
 
 const ROW_HEIGHT: usize = 3;
 const REFRESH_AFTER_TICK: u8 = 10;
-const REGEX_VOLUME_IN_USE: &str = r"\[([a-f0-9]+)\]";
+const REGEX_VOLUME_IN_USE: &str = r"\[([a-z0-9]+)\]";
 const DEFAULT_FOOTER: &str = " <Del/D> remove | <F> force remove";
 
 #[derive(Default)]
@@ -184,10 +184,7 @@ impl VolumeTable {
             .map(|m| format!("Volume is in use by container: {}...", &m.as_str()[..15]))
             .unwrap_or_else(|| "Something went wrong...".to_string());
 
-        self.err = Some(format!(
-            "[ERR] {}... | Press any key to dismiss...",
-            err_msg
-        ))
+        self.err = Some(format!("[ERR] {}", err_msg))
     }
 }
 
