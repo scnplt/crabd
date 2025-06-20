@@ -1,4 +1,4 @@
+mod common;
+pub mod container_info_block;
 pub mod container_table;
-pub mod container_info;
-pub mod common;
-pub mod component;
+pub mod info_block;

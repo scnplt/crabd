@@ -1,6 +1,6 @@
-use crate::{app::Screen, components::component::Component, event::AppEvent, utils::is_container_running};
+use crate::{event::AppEvent, utils::is_container_running};
 
-use super::common::{TableStyle, render_scrollbar, render_footer};
+use super::common::{TableStyle, render_footer, render_scrollbar};
 use bollard::secret::{ContainerSummary, Port, PortTypeEnum};
 use color_eyre::Result;
 use ratatui::{
@@ -11,69 +11,6 @@ use ratatui::{
     widgets::{Cell, HighlightSpacing, Row, ScrollbarState, Table, TableState},
 };
 
-pub struct ContainerTableRow {
-    id: String,
-    name: String,
-    image: String,
-    state: String,
-    pub ports: String,
-}
-
-impl ContainerTableRow {
-    pub const fn ref_array(&self) -> [&String; 5] {
-        [&self.id, &self.name, &self.image, &self.state, &self.ports]
-    }
-
-    pub fn from_list(containers: Vec<ContainerSummary>) -> Vec<Self> {
-        let mut result_list = containers.iter()
-            .map(ContainerTableRow::from)
-            .collect::<Vec<ContainerTableRow>>();
-
-        result_list.sort_by(|p, n| {
-            let p_is_running = p.state.starts_with("r");
-            let n_is_running = n.state.starts_with("r");
-
-            match (p_is_running, n_is_running) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => p.state.cmp(&n.state),
-            }
-        });
-
-        result_list
-    }
-
-    pub fn from(container: &ContainerSummary) -> Self {
-        let name: String = container.names.as_deref()
-            .and_then(|names| names.first())
-            .and_then(|name| name.strip_prefix("/"))
-            .map_or("NaN".to_string(), |name| name.to_string());
-
-        Self {
-            id: container.id.as_deref().unwrap_or("-").to_string(),
-            name,
-            image: container.image.as_deref().unwrap_or("-").to_string(),
-            state: container.state.as_deref().unwrap_or("-").to_string(),
-            ports: container.ports.as_ref()
-                .map_or("-".to_string(), |p| get_ports_text(p)),
-        }
-    }
-}
-
-fn get_ports_text(ports: &[Port]) -> String {
-    let mut filtered_ports: Vec<(u16, u16, PortTypeEnum)> = ports.iter()
-        .filter_map(|p| Some((p.private_port, p.public_port?, p.typ?)))
-        .collect();
-
-    filtered_ports.sort_by_key(|&(private, _, _)| private);
-    filtered_ports.dedup();
-
-    filtered_ports.iter()
-        .map(|&(private, public, typ)| format!("{private}:{public}/{typ}"))
-        .collect::<Vec<String>>()
-        .join("\n")
-}
-
 pub struct ContainerTable {
     state: TableState,
     items: Vec<ContainerTableRow>,
@@ -83,6 +20,14 @@ pub struct ContainerTable {
     show_all: bool,
     vertical_scroll: usize,
     skipped_tick_count_for_update: u8,
+}
+
+pub struct ContainerTableRow {
+    id: String,
+    name: String,
+    image: String,
+    state: String,
+    pub ports: String,
 }
 
 impl Default for ContainerTable {
@@ -100,8 +45,8 @@ impl Default for ContainerTable {
     }
 }
 
-impl Component for ContainerTable {
-    fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<Option<AppEvent>> {
+impl ContainerTable {
+    pub fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<Option<AppEvent>> {
         let mut event = None;
         match key_event.code {
             KeyCode::Esc | KeyCode::Char('q') => event = Some(AppEvent::Quit),
@@ -112,74 +57,61 @@ impl Component for ContainerTable {
                 if let Some(container) = self.get_selected_container() {
                     event = Some(AppEvent::RemoveContainer(container.id.clone()))
                 }
-            },
+            }
             KeyCode::Enter => {
                 if let Some(container) = self.get_selected_container() {
                     event = Some(AppEvent::GoToDetails(container.id.clone()))
                 }
             }
             KeyCode::Char(c) => {
-                let container = self.get_selected_container();
-                let container_id = container.as_ref().map(|c| c.id.clone());
-                event = match (c, container_id) {
+                event = match (c, self.get_selected_container().map(|c| c.id.clone())) {
                     ('r', Some(id)) => Some(AppEvent::RestartContainer(id)),
                     ('s', Some(id)) => Some(AppEvent::StopContainer(id)),
                     ('x', Some(id)) => Some(AppEvent::KillContainer(id)),
-                    _ => None
+                    _ => None,
                 };
-            },
+            }
             _ => {}
         };
         Ok(event)
     }
 
-    fn tick(&mut self) -> Result<Option<AppEvent>> {
-        let mut event: Option<AppEvent> = None;
-        if self.skipped_tick_count_for_update > 10 {
-            event = Some(AppEvent::UpdateContainers);
-            self.skipped_tick_count_for_update = 0;
-        } else {
-            self.skipped_tick_count_for_update += 1;
-        }
-        Ok(event)
-    }
+    pub fn draw(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
+        use Constraint::{Length, Min};
 
-    fn is_showing(&self, screen: &Screen) -> bool {
-        screen.eq(&Screen::ContainerList)
-    }
-
-    fn draw(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
-        let vertical_layout = Layout::vertical([Constraint::Min(0), Constraint::Length(3)]);
+        let vertical_layout = Layout::vertical([Min(0), Length(3)]);
         let [content_area, footer_area] = vertical_layout.areas(area);
 
-        let horizontal_content_layout = Layout::horizontal([Constraint::Min(0), Constraint::Length(1)]);
+        let horizontal_content_layout = Layout::horizontal([Min(0), Length(1)]);
         let [table_area, scrollbar_area] = horizontal_content_layout.areas(content_area);
 
         self.render_table(frame, table_area);
 
         self.update_scroll_state();
-        render_scrollbar(frame, scrollbar_area, &mut self.vertical_scrollbar_state, true);
-        
-        let is_selected_container_running = self.get_selected_container().map(|c| is_container_running(&c.state));
+        render_scrollbar(
+            frame,
+            scrollbar_area,
+            &mut self.vertical_scrollbar_state,
+            true,
+        );
+
+        let is_selected_container_running = self.get_selected_container()
+            .map(|c| is_container_running(&c.state));
+
         let footer_text = get_footer_text(self.show_all, is_selected_container_running);
         render_footer(frame, footer_area, footer_text);
 
         // If there is items but no row selected, select the first row.
         // This happens when changing the `self.show_all` parameter.
-        if self.state.selected().is_none() && !self.items.is_empty() { self.select_row(0); }
+        if self.state.selected().is_none() && !self.items.is_empty() {
+            self.select_row(0);
+        }
 
         Ok(())
     }
-    
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
-    }
-}
 
-impl ContainerTable {
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
-        let header = ["ID", "Name", "Image", "State", "Ports"]
-            .into_iter()
+        let header = ["ID", "Name", "Image", "State", "Ports"].into_iter()
             .map(Cell::from)
             .collect::<Row>()
             .style(self.style.header_style)
@@ -195,7 +127,9 @@ impl ContainerTable {
                 let ports: Vec<&str> = container.ports.split("\n").filter(|s| !s.is_empty()).collect();
 
                 let height = if ports.is_empty() { 3 } else { ports.len() + 2 };
-                if index < self.items.len() - 1 { self.row_heights.push(height); }
+                if index < self.items.len() - 1 {
+                    self.row_heights.push(height);
+                }
 
                 item.into_iter()
                     .map(|content| Cell::from(Text::from(format!("\n{content}\n"))))
@@ -246,12 +180,78 @@ impl ContainerTable {
     pub fn update_with_items(&mut self, items: Vec<ContainerTableRow>) {
         let is_empty_before_update = self.items.is_empty();
         self.items = items;
-        if is_empty_before_update && !self.items.is_empty() { self.select_row(0); }
+        if is_empty_before_update && !self.items.is_empty() {
+            self.select_row(0);
+        }
     }
 
     pub fn get_selected_container(&self) -> Option<&ContainerTableRow> {
         self.state.selected().and_then(|index| self.items.get(index))
     }
+
+    pub fn tick(&mut self) -> Result<Option<AppEvent>> {
+        if self.skipped_tick_count_for_update <= 10 {
+            self.skipped_tick_count_for_update += 1;
+            return Ok(None);
+        }
+
+        self.skipped_tick_count_for_update = 0;
+        Ok(Some(AppEvent::UpdateContainers))
+    }
+}
+
+impl ContainerTableRow {
+    pub const fn ref_array(&self) -> [&String; 5] {
+        [&self.id, &self.name, &self.image, &self.state, &self.ports]
+    }
+
+    pub fn from_list(containers: Vec<ContainerSummary>) -> Vec<Self> {
+        let mut result_list = containers.iter()
+            .map(ContainerTableRow::from)
+            .collect::<Vec<ContainerTableRow>>();
+
+        result_list.sort_by(|p, n| {
+            let p_is_running = p.state.starts_with("r");
+            let n_is_running = n.state.starts_with("r");
+
+            match (p_is_running, n_is_running) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => p.state.cmp(&n.state),
+            }
+        });
+
+        result_list
+    }
+
+    pub fn from(container: &ContainerSummary) -> Self {
+        let name: String = container.names.as_deref()
+            .and_then(|names| names.first())
+            .and_then(|name| name.strip_prefix("/"))
+            .map_or("NaN".to_string(), |name| name.to_string());
+
+        Self {
+            id: container.id.as_deref().unwrap_or("-").to_string(),
+            name,
+            image: container.image.as_deref().unwrap_or("-").to_string(),
+            state: container.state.as_deref().unwrap_or("-").to_string(),
+            ports: container.ports.as_ref().map_or("-".to_string(), |p| get_ports_text(p)),
+        }
+    }
+}
+
+fn get_ports_text(ports: &[Port]) -> String {
+    let mut filtered_ports: Vec<(u16, u16, PortTypeEnum)> = ports.iter()
+        .filter_map(|p| Some((p.private_port, p.public_port?, p.typ?)))
+        .collect();
+
+    filtered_ports.sort_by_key(|&(private, _, _)| private);
+    filtered_ports.dedup();
+
+    filtered_ports.iter()
+        .map(|&(private, public, typ)| format!("{private}:{public}/{typ}"))
+        .collect::<Vec<String>>()
+        .join("\n")
 }
 
 fn get_footer_text(show_all: bool, is_running: Option<bool>) -> String {
@@ -259,7 +259,11 @@ fn get_footer_text(show_all: bool, is_running: Option<bool>) -> String {
     let mut op_text = "".to_string();
 
     if let Some(running) = is_running {
-        let running_text = if running { "restart | <S> stop | <X> kill " } else { "start " };
+        let running_text = if running {
+            "restart | <S> stop | <X> kill "
+        } else {
+            "start "
+        };
         op_text = format!(" | <R> {running_text}| <Del/D> remove");
     }
 
