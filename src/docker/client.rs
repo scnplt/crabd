@@ -4,9 +4,10 @@ use bollard::container::{
     RestartContainerOptions, StopContainerOptions,
 };
 use bollard::models::ContainerSummary;
-use bollard::secret::{ContainerInspectResponse, VolumeListResponse};
+use bollard::secret::{ContainerInspectResponse, Network, VolumeListResponse};
 use bollard::volume::{ListVolumesOptions, RemoveVolumeOptions};
 use color_eyre::eyre::Result;
+use bollard::network::ListNetworksOptions;
 
 #[derive(Clone)]
 pub struct DockerClient {
@@ -77,5 +78,13 @@ impl DockerClient {
 
     pub async fn remove_volume(&self, name: &str, force: bool) -> Result<()> {
         Ok(self.client.remove_volume(name, Some(RemoveVolumeOptions { force })).await?)
+    }
+
+    pub async fn list_networks(&self) -> Result<Vec<Network>> {
+        Ok(self.client.list_networks(Some(ListNetworksOptions::<String>::default())).await?)
+    }
+
+    pub async fn remove_network(&self, name: &str) -> Result<()> {
+        Ok(self.client.remove_network(name).await?)
     }
 }

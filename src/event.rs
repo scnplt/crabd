@@ -25,6 +25,8 @@ pub enum AppEvent {
     GoToContainerDetails(String),
     UpdateVolumes,
     RemoveVolume(String, bool),
+    UpdateNetworks,
+    RemoveNetwork(String),
     Back,
 }
 
