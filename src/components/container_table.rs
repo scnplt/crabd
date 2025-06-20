@@ -27,7 +27,7 @@ pub struct ContainerTableRow {
     name: String,
     image: String,
     state: String,
-    pub ports: String,
+    ports: String,
 }
 
 impl Default for ContainerTable {
@@ -60,7 +60,7 @@ impl ContainerTable {
             }
             KeyCode::Enter => {
                 if let Some(container) = self.get_selected_container() {
-                    event = Some(AppEvent::GoToDetails(container.id.clone()))
+                    event = Some(AppEvent::GoToContainerDetails(container.id.clone()))
                 }
             }
             KeyCode::Char(c) => {
@@ -99,7 +99,7 @@ impl ContainerTable {
             .map(|c| is_container_running(&c.state));
 
         let footer_text = get_footer_text(self.show_all, is_selected_container_running);
-        render_footer(frame, footer_area, footer_text);
+        render_footer(frame, footer_area, footer_text, None);
 
         // If there is items but no row selected, select the first row.
         // This happens when changing the `self.show_all` parameter.
@@ -201,7 +201,7 @@ impl ContainerTable {
 }
 
 impl ContainerTableRow {
-    pub const fn ref_array(&self) -> [&String; 5] {
+    const fn ref_array(&self) -> [&String; 5] {
         [&self.id, &self.name, &self.image, &self.state, &self.ports]
     }
 
@@ -224,7 +224,7 @@ impl ContainerTableRow {
         result_list
     }
 
-    pub fn from(container: &ContainerSummary) -> Self {
+    fn from(container: &ContainerSummary) -> Self {
         let name: String = container.names.as_deref()
             .and_then(|names| names.first())
             .and_then(|name| name.strip_prefix("/"))

@@ -106,6 +106,7 @@ impl ScrollableInfoBlock for ContainerInfoBlock {
             frame,
             footer_area,
             get_footer_text(is_container_running(&self.data.state)),
+            None,
         );
 
         Ok(())

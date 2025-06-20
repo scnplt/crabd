@@ -49,13 +49,12 @@ pub fn render_scrollbar(frame: &mut Frame, area: Rect, state: &mut ScrollbarStat
     frame.render_stateful_widget(scrollbar, area, state);
 }
 
-pub fn render_footer(frame: &mut Frame, area: Rect, text: String) {
-    let border_style = Style::default().fg(tailwind::BLUE.c400);
+pub fn render_footer(frame: &mut Frame, area: Rect, text: String, border_style: Option<Style>) {
     let paragraph_style = Style::default().fg(tailwind::SLATE.c200);
 
     let block = Block::bordered()
         .border_type(BorderType::Plain)
-        .border_style(border_style);
+        .border_style(border_style.unwrap_or(Style::default().fg(tailwind::BLUE.c400)));
 
     let paragraph = Paragraph::new(text)
         .style(paragraph_style)
