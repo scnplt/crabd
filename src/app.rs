@@ -116,6 +116,11 @@ impl App {
                 }
                 AppEvent::GoToContainerDetails(id) => self.go_to_container_info(id).await?,
                 AppEvent::UpdateVolumes => self.update_volumes().await?,
+                AppEvent::RemoveVolume(name, force) => {
+                    if let Err(e) = self.docker_client.remove_volume(&name, force).await {
+                        self.volume_table.show_volume_in_use_err(e.to_string());
+                    }
+                }
                 AppEvent::Back => self.container_info = None,
             },
         }
