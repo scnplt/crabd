@@ -1,6 +1,7 @@
 use crate::components::container_info_block::{ContainerData, ContainerInfoBlock};
 use crate::components::container_table::{ContainerTable, ContainerTableRow};
 use crate::components::info_block::ScrollableInfoBlock;
+use crate::components::volume_table::{VolumeTable, VolumeTableRow};
 use crate::docker::client::DockerClient;
 use crate::event::{AppEvent, Event, EventHandler};
 use color_eyre::eyre::Result;
@@ -24,6 +25,7 @@ pub struct App {
     selected_tab: SelectedTab,
     container_table: ContainerTable,
     container_info: Option<Box<dyn ScrollableInfoBlock<Data = ContainerData>>>,
+    volume_table: VolumeTable,
 }
 
 impl App {
@@ -35,6 +37,7 @@ impl App {
             selected_tab: SelectedTab::default(),
             container_table: ContainerTable::default(),
             container_info: None,
+            volume_table: VolumeTable::default(),
         })
     }
 
@@ -80,6 +83,7 @@ impl App {
     fn render_selected_tab(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
         match self.selected_tab {
             SelectedTab::Containers => self.container_table.draw(frame, area)?,
+            SelectedTab::Volumes => self.volume_table.draw(frame, area)?,
             _ => frame.render_widget(Text::from("TODO"), area),
         }
         Ok(())
@@ -110,7 +114,13 @@ impl App {
                     self.container_info = None;
                     self.docker_client.remove_container(&id).await?
                 }
-                AppEvent::GoToDetails(id) => self.go_to_container_info(id).await?,
+                AppEvent::GoToContainerDetails(id) => self.go_to_container_info(id).await?,
+                AppEvent::UpdateVolumes => self.update_volumes().await?,
+                AppEvent::RemoveVolume(name, force) => {
+                    if let Err(e) = self.docker_client.remove_volume(&name, force).await {
+                        self.volume_table.show_volume_in_use_err(e.to_string());
+                    }
+                }
                 AppEvent::Back => self.container_info = None,
             },
         }
@@ -137,6 +147,7 @@ impl App {
             }
             _ => match self.selected_tab {
                 SelectedTab::Containers => self.container_table.handle_key_event(key_event)?,
+                SelectedTab::Volumes => self.volume_table.handle_key_event(key_event)?,
                 _ => None,
             },
         };
@@ -168,6 +179,7 @@ impl App {
 
         let event = match self.selected_tab {
             SelectedTab::Containers => self.container_table.tick()?,
+            SelectedTab::Volumes => self.volume_table.tick()?,
             _ => None,
         };
 
@@ -198,6 +210,14 @@ impl App {
         if let Ok(result) = self.docker_client.list_containers().await {
             let containers = ContainerTableRow::from_list(result);
             self.container_table.update_with_items(containers);
+        }
+        Ok(())
+    }
+
+    async fn update_volumes(&mut self) -> Result<()> {
+        if let Some(result) = self.docker_client.list_volumes().await?.volumes {
+            let volumes = VolumeTableRow::from_list(result);
+            self.volume_table.update_with_items(volumes);
         }
         Ok(())
     }
