@@ -27,7 +27,7 @@ pub struct ContainerTableRow {
     name: String,
     image: String,
     state: String,
-    pub ports: String,
+    ports: String,
 }
 
 impl Default for ContainerTable {
@@ -60,7 +60,7 @@ impl ContainerTable {
             }
             KeyCode::Enter => {
                 if let Some(container) = self.get_selected_container() {
-                    event = Some(AppEvent::GoToDetails(container.id.clone()))
+                    event = Some(AppEvent::GoToContainerDetails(container.id.clone()))
                 }
             }
             KeyCode::Char(c) => {
@@ -201,7 +201,7 @@ impl ContainerTable {
 }
 
 impl ContainerTableRow {
-    pub const fn ref_array(&self) -> [&String; 5] {
+    const fn ref_array(&self) -> [&String; 5] {
         [&self.id, &self.name, &self.image, &self.state, &self.ports]
     }
 
@@ -224,7 +224,7 @@ impl ContainerTableRow {
         result_list
     }
 
-    pub fn from(container: &ContainerSummary) -> Self {
+    fn from(container: &ContainerSummary) -> Self {
         let name: String = container.names.as_deref()
             .and_then(|names| names.first())
             .and_then(|name| name.strip_prefix("/"))
