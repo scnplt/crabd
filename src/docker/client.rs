@@ -3,11 +3,12 @@ use bollard::container::{
     InspectContainerOptions, KillContainerOptions, ListContainersOptions, RemoveContainerOptions,
     RestartContainerOptions, StopContainerOptions,
 };
+use bollard::image::{ListImagesOptions, RemoveImageOptions};
 use bollard::models::ContainerSummary;
-use bollard::secret::{ContainerInspectResponse, Network, VolumeListResponse};
+use bollard::network::ListNetworksOptions;
+use bollard::secret::{ContainerInspectResponse, ImageSummary, Network, VolumeListResponse};
 use bollard::volume::{ListVolumesOptions, RemoveVolumeOptions};
 use color_eyre::eyre::Result;
-use bollard::network::ListNetworksOptions;
 
 #[derive(Clone)]
 pub struct DockerClient {
@@ -86,5 +87,16 @@ impl DockerClient {
 
     pub async fn remove_network(&self, name: &str) -> Result<()> {
         Ok(self.client.remove_network(name).await?)
+    }
+
+    pub async fn list_images(&self) -> Result<Vec<ImageSummary>> {
+        let options = Some(ListImagesOptions::<String> { all: true, ..Default::default() });
+        Ok(self.client.list_images(options).await?)
+    }
+
+    pub async fn remove_image(&self, id: &str, force: bool) -> Result<()> {
+        let options = Some(RemoveImageOptions { force, ..Default::default() });
+        self.client.remove_image(id, options, None).await?;
+        Ok(())
     }
 }

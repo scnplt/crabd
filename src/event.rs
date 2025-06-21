@@ -27,6 +27,8 @@ pub enum AppEvent {
     RemoveVolume(String, bool),
     UpdateNetworks,
     RemoveNetwork(String),
+    UpdateImages,
+    RemoveImage(String, bool),
     Back,
 }
 
