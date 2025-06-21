@@ -81,7 +81,7 @@ impl ScrollableInfoBlock for ContainerInfoBlock {
         self.render_content(frame, info_area, content_lines);
 
         self.scroll_info.vertical_state = self.scroll_info.vertical_state
-            .content_length(self.scroll_info.max_horizontal)
+            .content_length(self.scroll_info.max_vertical)
             .position(self.scroll_info.vertical);
 
         render_scrollbar(
