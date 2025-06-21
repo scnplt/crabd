@@ -1,16 +1,31 @@
 # crabd
 
+A terminal-based Docker resource manager written in Rust. Easily view, manage, and control your Docker containers, images, networks, and volumes with a fast and intuitive TUI.
+
 ![](./assets/crabd.gif)
+
+## Features
+
+- List and manage Docker containers, images, networks, and volumes
+- Start, stop, restart, kill, and remove containers
+- Filter running/all containers
+- Keyboard-driven navigation (see Keymap below)
+
+## Requirements
+
+- Docker daemon running on your system
+- [Rust toolchain](https://rustup.rs/) (for building from source)
+- For static builds: musl target (`rustup target add x86_64-unknown-linux-musl`)
 
 ## Installation
 
-### With prebuild binary file:
+### With prebuilt binary file (Linux x86_64):
 
-Download the prebuild binary file and make it executable:
+Download the prebuilt binary file and make it executable:
 
 ```bash
-# Replace v0.1.0-beta.3 with the version you want to install
-curl -L https://github.com/scnplt/crabd/releases/download/v0.1.0-beta.3/crabd -o crabd && chmod +x crabd
+# Replace RELEASE_VERSION with the version you want to install
+curl -L https://github.com/scnplt/crabd/releases/download/RELEASE_VERSION/crabd-linux -o crabd && chmod +x crabd
 ```
 
 Run:
@@ -19,7 +34,7 @@ Run:
 ./crabd
 ```
 
-###  Or build from source:
+### Or build from source:
 
 ```bash
 git clone https://github.com/scnplt/crabd.git && cd crabd
@@ -31,16 +46,28 @@ cargo build --release --target=x86_64-unknown-linux-musl
 
 ## Keymap 
 
-| Key | Description |
-|-|-|
-| J | Down |
-| K | Up |
-| Q | Quit/Back |
-| T | Show all/only running |
-| R | Start/Restart |
-| S | Stop |
-| X | Kill |
-| Del/D | Remove |
+| Key     | Description      |
+|---------|-----------------|
+| J       | Down            |
+| K       | Up              |
+| Q       | Quit/Back       |
+| T       | Show all/only running |
+| R       | Start/Restart   |
+| S       | Stop            |
+| X       | Kill            |
+| Del/D   | Remove          |
+
+## Things To Do
+
+- Code optimization and refactoring
+- Add customization options (themes, keybindings, etc.)
+- Improve error handling and user feedback
+- Add more advanced filtering and search features
+- Add tests and CI/CD pipeline
+
+## Contributing
+
+Contributions are welcome! Please open issues or pull requests on [GitHub](https://github.com/scnplt/crabd).
 
 ## License
 
