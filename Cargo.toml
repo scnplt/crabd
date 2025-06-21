@@ -1,12 +1,17 @@
 [package]
 name = "crabd"
-version = "0.1.0-beta.3"
+version = "0.2.0-beta.1"
 authors = ["Sertan Canpolat <58915038+scnplt@users.noreply.github.com>"]
 license = "Apache-2.0"
 edition = "2024"
 
 [dependencies]
 bollard = "0.18.1"
-crossterm = "0.28.1"
+color-eyre = "0.6.5"
+crossterm = { version = "0.28.1", features = ["event-stream"] }
+futures = "0.3.31"
 ratatui = "0.29.0"
+regex = "1.11.1"
+strum = "0.27.1"
+strum_macros = "0.27.1"
 tokio = {version = "1.44.2", features = ["full"]}

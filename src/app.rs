@@ -1,176 +1,317 @@
-use crate::{
-    docker::client::DockerClient, 
-    views::{container_info::{ContainerInfo, ContainerInfoData}, 
-    container_table::{ContainerData, ContainersTable}}
+use crate::components::container_info_block::{ContainerData, ContainerInfoBlock};
+use crate::components::container_table::{ContainerTable, ContainerTableRow};
+use crate::components::image_table::{ImageTable, ImageTableRow};
+use crate::components::info_block::ScrollableInfoBlock;
+use crate::components::network_table::{NetworkTable, NetworkTableRow};
+use crate::components::volume_table::{VolumeTable, VolumeTableRow};
+use crate::docker::client::DockerClient;
+use crate::event::{AppEvent, Event, EventHandler};
+use color_eyre::eyre::Result;
+use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::palette::tailwind;
+use ratatui::style::{Color, Stylize};
+use ratatui::text::Line;
+use ratatui::widgets::Tabs;
+use ratatui::{
+    DefaultTerminal,
+    crossterm::event::{Event::Key, KeyCode, KeyEvent, KeyModifiers},
 };
-
-use crossterm::event::{self, Event, KeyCode, KeyEvent};
-use tokio::sync::mpsc::Receiver;
-use std::{io, sync::{Arc, Mutex}, time::Duration};
-use bollard::secret::ContainerSummary;
-use ratatui::DefaultTerminal;
- 
-#[derive(PartialEq)]
-pub enum CurrentScreen {
-    List,
-    Info,
-}
-
-#[derive(PartialEq)]
-enum NextOperation {
-    None,
-    Restart,
-    Stop,
-    Kill,
-    Remove,
-}
+use strum::IntoEnumIterator;
+use strum_macros::{Display, EnumIter, FromRepr};
 
 pub struct App {
-    pub current_screen: CurrentScreen,
-    pub should_exit: bool,
-    pub show_all: bool,
-    containers_table: ContainersTable,
-    container_info: ContainerInfo,
-    docker: DockerClient,
-    next_operation: NextOperation,
-    selected_container_id: String,
+    running: bool,
+    events: EventHandler,
+    docker_client: DockerClient,
+    selected_tab: SelectedTab,
+    container_table: ContainerTable,
+    container_info: Option<Box<dyn ScrollableInfoBlock<Data = ContainerData>>>,
+    volume_table: VolumeTable,
+    network_table: NetworkTable,
+    image_table: ImageTable,
 }
 
 impl App {
-
-    pub async fn new(client: DockerClient, containers: Arc<Mutex<Vec<ContainerSummary>>>) -> Self {
-        let show_all = true;
-        let containers_data: Vec<ContainerData> = ContainerData::from_list(containers.lock().unwrap().to_vec(), show_all);
-        let mut first_container_id = "-1".to_string();
-
-        if let Some(container) = containers_data.first() {
-            first_container_id = container.id.clone()
-        }
-
-        Self {
-            current_screen: CurrentScreen::List,
-            should_exit: false,
-            show_all,
-            containers_table: ContainersTable::new(containers_data),
-            container_info: ContainerInfo::default(),
-            docker: client,
-            next_operation: NextOperation::None,
-            selected_container_id: first_container_id,
-        }
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            running: true,
+            events: EventHandler::new(),
+            docker_client: DockerClient::new()?,
+            selected_tab: SelectedTab::default(),
+            container_table: ContainerTable::default(),
+            container_info: None,
+            volume_table: VolumeTable::default(),
+            network_table: NetworkTable::default(),
+            image_table: ImageTable::default(),
+        })
     }
 
-    pub async fn run(&mut self, terminal: &mut DefaultTerminal, rx: &mut Receiver<Vec<ContainerSummary>>) -> io::Result<()> {
-        while !self.should_exit {
-            match self.current_screen {
-                CurrentScreen::List => self.draw_containers_table(terminal, rx),
-                CurrentScreen::Info => self.draw_container_info(terminal).await
-            }
-            
-            self.handle_events()?;
-            self.handle_container_operations().await;
+    pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+        self.update_containers().await?;
+
+        while self.running {
+            terminal.draw(|frame| self.draw(frame, frame.area()))?;
+            self.process_next_event().await?;
         }
         Ok(())
     }
 
-    fn draw_containers_table(&mut self, terminal: &mut DefaultTerminal, rx: &mut Receiver<Vec<ContainerSummary>>) {
-        terminal.draw(|frame| self.containers_table.draw(frame, self.show_all)).unwrap();
-        if let Ok(result) = rx.try_recv() {
-            self.containers_table.items = ContainerData::from_list(result, self.show_all);
+    fn draw(&mut self, frame: &mut Frame, area: Rect) {
+        use Constraint::{Length, Min};
+        let vertical = Layout::vertical([Length(1), Length(1), Min(0)]);
+        let [header_area, _, inner_area] = vertical.areas(area);
+
+        let header_horizontal = Layout::horizontal([Min(0), Length(6)]);
+        let [tabs_area, title_area] = header_horizontal.areas(header_area);
+
+        if let Some(info_block) = self.container_info.as_mut() {
+            let _ = info_block.draw(frame, area);
+        } else {
+            render_title(frame, title_area);
+            self.render_tabs(frame, tabs_area);
+            let _ = self.render_selected_tab(frame, inner_area);
         }
+    }
+
+    fn render_tabs(&mut self, frame: &mut Frame, area: Rect) {
+        let titles = SelectedTab::iter().map(SelectedTab::title);
+        let hightlight_style = (Color::default(), tailwind::SLATE.c700);
+        let selected_tab_index = self.selected_tab as usize;
+
+        let tabs = Tabs::new(titles)
+            .highlight_style(hightlight_style)
+            .select(selected_tab_index)
+            .padding("", "")
+            .divider(" ");
+
+        frame.render_widget(tabs, area);
+    }
+
+    fn render_selected_tab(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
+        match self.selected_tab {
+            SelectedTab::Containers => self.container_table.draw(frame, area)?,
+            SelectedTab::Volumes => self.volume_table.draw(frame, area)?,
+            SelectedTab::Networks => self.network_table.draw(frame, area)?,
+            SelectedTab::Images => self.image_table.draw(frame, area)?,
+        }
+        Ok(())
+    }
+
+    async fn process_next_event(&mut self) -> Result<()> {
+        match self.events.next().await? {
+            Event::Tick => {
+                if let Some(event) = self.tick()? {
+                    self.events.send(event)
+                }
+            }
+            Event::Crossterm(event) => {
+                if let Key(key_event) = event {
+                    if let Some(event) = self.handle_key_event(key_event)? {
+                        self.events.send(event);
+                    }
+                }
+            }
+            Event::App(app_event) => match app_event {
+                AppEvent::Quit => self.quit(),
+                AppEvent::UpdateContainers => self.update_containers().await?,
+                AppEvent::UpdateContainerInfo(id) => self.update_container_details(id).await?,
+                AppEvent::RestartContainer(id) => self.docker_client.restart_container(&id).await?,
+                AppEvent::StopContainer(id) => self.docker_client.stop_container(&id).await?,
+                AppEvent::KillContainer(id) => self.docker_client.kill_container(&id).await?,
+                AppEvent::RemoveContainer(id) => self.remove_container(id).await?,
+                AppEvent::GoToContainerDetails(id) => self.go_to_container_info(id).await?,
+                AppEvent::UpdateVolumes => self.update_volumes().await?,
+                AppEvent::RemoveVolume(name, force) => self.remove_volume(name, force).await?,
+                AppEvent::UpdateNetworks => self.update_networks().await?,
+                AppEvent::RemoveNetwork(name) => self.remove_network(name).await?,
+                AppEvent::UpdateImages => self.update_images().await?,
+                AppEvent::RemoveImage(id, force) => self.remove_image(id, force).await?,
+                AppEvent::Back => self.container_info = None,
+            },
+        }
+        Ok(())
+    }
+
+    fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<Option<AppEvent>> {
+        if key_event.code == KeyCode::Char('c') && key_event.modifiers == KeyModifiers::CONTROL {
+            return Ok(Some(AppEvent::Quit))
+        }
+
+        if let Some(info) = self.container_info.as_mut() {
+            return info.handle_key_event(key_event);
+        }
+
+        let event = match key_event.code {
+            KeyCode::Right | KeyCode::Char('l' | 'L') => {
+                self.next_tab();
+                None
+            }
+            KeyCode::Left | KeyCode::Char('h' | 'H') => {
+                self.previous_tab();
+                None
+            }
+            _ => match self.selected_tab {
+                SelectedTab::Containers => self.container_table.handle_key_event(key_event)?,
+                SelectedTab::Volumes => self.volume_table.handle_key_event(key_event)?,
+                SelectedTab::Networks => self.network_table.handle_key_event(key_event)?,
+                SelectedTab::Images => self.image_table.handle_key_event(key_event)?
+            },
+        };
+
+        Ok(event)
+    }
+
+    fn next_tab(&mut self) {
+        self.selected_tab = self.selected_tab.next()
+    }
+
+    fn previous_tab(&mut self) {
+        self.selected_tab = self.selected_tab.previous()
+    }
+
+    async fn go_to_container_info(&mut self, container_id: String) -> Result<()> {
+        if let Some(data) = self.get_container_data(container_id).await {
+            let mut container_info_block = ContainerInfoBlock::default();
+            container_info_block.update_data(data);
+            self.container_info = Some(Box::new(container_info_block));
+        }
+        Ok(())
+    }
+
+    fn tick(&mut self) -> Result<Option<AppEvent>> {
+        if let Some(info) = self.container_info.as_mut() {
+            return info.tick();
+        }
+
+        let event = match self.selected_tab {
+            SelectedTab::Containers => self.container_table.tick()?,
+            SelectedTab::Volumes => self.volume_table.tick()?,
+            SelectedTab::Networks => self.network_table.tick()?,
+            SelectedTab::Images => self.image_table.tick()?
+        };
+
+        Ok(event)
+    }
+
+    fn quit(&mut self) {
+        self.running = false;
+    }
+
+    async fn get_container_data(&self, container_id: String) -> Option<ContainerData> {
+        if let Ok(data) = self.docker_client.inspect_container(&container_id).await {
+            return Some(ContainerData::from(data));
+        }
+        None
+    }
+
+    async fn update_container_details(&mut self, container_id: String) -> Result<()> {
+        if let Some(data) = self.get_container_data(container_id).await {
+            if let Some(info_block) = self.container_info.as_mut() {
+                info_block.update_data(data);
+            }
+        }
+        Ok(())
+    }
+
+    async fn update_containers(&mut self) -> Result<()> {
+        if let Ok(result) = self.docker_client.list_containers().await {
+            let containers = ContainerTableRow::from_list(result);
+            self.container_table.update_with_items(containers);
+        }
+        Ok(())
+    }
+
+    async fn update_volumes(&mut self) -> Result<()> {
+        if let Some(result) = self.docker_client.list_volumes().await?.volumes {
+            let volumes = VolumeTableRow::from_list(result);
+            self.volume_table.update_with_items(volumes);
+        }
+        Ok(())
     }
     
-    async fn draw_container_info(&mut self, terminal: &mut DefaultTerminal) {
-        self.update_selected_container_id();
-        let data = self.docker.inspect_container(&self.selected_container_id).await;
-        if let Ok(info) = data {
-            self.container_info.data = ContainerInfoData::from(info);
-            terminal.draw(|frame| self.container_info.draw(frame)).unwrap();
-        }
-    }
-
-    async fn handle_container_operations(&mut self) {
-        let result: Result<_, _> = match self.next_operation {
-            NextOperation::Restart => self.docker.restart_container(&self.selected_container_id).await,
-            NextOperation::Stop => self.docker.stop_container(&self.selected_container_id).await,
-            NextOperation::Kill => self.docker.kill_container(&self.selected_container_id).await,
-            NextOperation::Remove => {
-                self.current_screen = CurrentScreen::List;
-                self.docker.remove_container(&self.selected_container_id).await
-            },
-            _ => Err("Pass".into())
-        };
-        
-        if result.is_ok() { self.next_operation = NextOperation::None; }
-    }
-
-    fn handle_events(&mut self) -> io::Result<()> {
-        if crossterm::event::poll(Duration::from_millis(50))? {
-            if let Event::Key(KeyEvent { code, ..}) = event::read()? {
-                self.handle_key_event(code);
-            }
+    async fn update_networks(&mut self) -> Result<()> {
+        if let Ok(result) = self.docker_client.list_networks().await {
+            let networks = NetworkTableRow::from_list(result);
+            self.network_table.update_with_items(networks);
         }
         Ok(())
     }
 
-    fn handle_key_event(&mut self, code: KeyCode) {
-        if self.next_operation != NextOperation::None { return; }
-
-        match self.current_screen {
-            CurrentScreen::Info => self.container_info.handle_key_event(code),
-            CurrentScreen::List => self.containers_table.handle_key_event(code),
+    async fn update_images(&mut self) -> Result<()> {
+        if let Ok(result) = self.docker_client.list_images().await {
+            let images = ImageTableRow::from_list(result);
+            self.image_table.update_with_items(images);
         }
-        
-        match code {
-            KeyCode::Esc | KeyCode::Char('q') => self.back(),
-            KeyCode::Enter => self.go_to_info_screen(),
-            KeyCode::Char('t') => self.show_all = !self.show_all,
-            KeyCode::Char('r') => self.restart_container(),
-            KeyCode::Char('s') => self.stop_container(),
-            KeyCode::Char('x') => self.kill_container(),
-            KeyCode::Delete | KeyCode::Char('d') => self.remove_container(),
-            _ => {}
+        Ok(())
+    }
+
+    async fn remove_container(&mut self, container_id: String) -> Result<()> {
+        self.container_info = None;
+        self.docker_client.remove_container(&container_id).await?;
+        Ok(())
+    }
+
+    async fn remove_volume(&mut self, name: String, force: bool) -> Result<()> {
+        if let Err(e) = self.docker_client.remove_volume(&name, force).await {
+            self.volume_table.show_remove_volume_err(e.to_string());
         }
+        Ok(())
     }
 
-    fn back(&mut self) {
-        match self.current_screen {
-            CurrentScreen::Info => {
-                self.container_info.vertical_scroll = 0;
-                self.current_screen = CurrentScreen::List
-            },
-            CurrentScreen::List => self.should_exit = true
+    async fn remove_network(&mut self, name: String) -> Result<()> {
+        if let Err(e) = self.docker_client.remove_network(&name).await {
+            self.network_table.show_remove_network_err(e.to_string());
         }
+        Ok(())
     }
 
-    fn go_to_info_screen(&mut self) {
-        if self.current_screen == CurrentScreen::List {
-            self.current_screen = CurrentScreen::Info;
-            self.container_info.reset_scroll_state();
+    async fn remove_image(&mut self, id: String, force: bool) -> Result<()> {
+        if let Err(e) = self.docker_client.remove_image(&id, force).await {
+            self.image_table.show_remove_image_err(e.to_string());
         }
+        Ok(())
+    }
+}
+
+fn render_title(frame: &mut Frame, area: Rect) {
+    let title = " crabd".bold();
+    frame.render_widget(title, area);
+}
+
+#[derive(Default, Display, FromRepr, EnumIter, Clone, Copy)]
+enum SelectedTab {
+    #[default]
+    #[strum(to_string = "Containers")]
+    Containers,
+
+    #[strum(to_string = "Volumes")]
+    Volumes,
+
+    #[strum(to_string = "Networks")]
+    Networks,
+
+    #[strum(to_string = "Images")]
+    Images,
+}
+
+impl SelectedTab {
+    fn title(self) -> Line<'static> {
+        format!("  {self}  ")
+            .fg(tailwind::SLATE.c200)
+            .bg(tailwind::SLATE.c900)
+            .into()
     }
 
-    fn restart_container(&mut self) {
-        self.update_selected_container_id();
-        self.next_operation = NextOperation::Restart;
+    fn next(self) -> Self {
+        let current_index = self as usize;
+        let next_index = current_index.saturating_add(1);
+        Self::from_repr(next_index).unwrap_or(self)
     }
 
-    fn stop_container(&mut self) {
-        self.update_selected_container_id();
-        self.next_operation = NextOperation::Stop;
-    }
-
-    fn kill_container(&mut self) {
-        self.update_selected_container_id();
-        self.next_operation = NextOperation::Kill;
-    }
-
-    fn remove_container(&mut self) {
-        self.update_selected_container_id();
-        self.next_operation = NextOperation::Remove;
-    }
-
-    fn update_selected_container_id(&mut self) {
-        let container_id = self.containers_table.get_current_container_id();
-        self.selected_container_id = container_id;
+    fn previous(self) -> Self {
+        let current_index = self as usize;
+        let previous_index = current_index.saturating_sub(1);
+        Self::from_repr(previous_index).unwrap_or(self)
     }
 }
