@@ -4,6 +4,7 @@ use ratatui::{
     style::{Modifier, Style, palette::tailwind},
     widgets::{Block, BorderType, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct TableStyle {
     pub header_style: Style,
@@ -62,4 +63,36 @@ pub fn render_footer(frame: &mut Frame, area: Rect, text: String, border_style: 
         .block(block);
 
     frame.render_widget(paragraph, area);
+}
+
+pub fn time_ago_string(epoch_secs: i64) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_secs() as i64;
+
+    let diff = now - epoch_secs;
+    let abs_diff = diff.abs();
+
+    let (value, unit) = if abs_diff >= 31_536_000 {
+        (abs_diff / 31_536_000, "year")
+    } else if abs_diff >= 2_592_000 {
+        (abs_diff / 2_592_000, "month")
+    } else if abs_diff >= 86_400 {
+        (abs_diff / 86_400, "day")
+    } else if abs_diff >= 3_600 {
+        (abs_diff / 3_600, "hour")
+    } else if abs_diff >= 60 {
+        (abs_diff / 60, "minute")
+    } else {
+        (abs_diff, "second")
+    };
+
+    let plural = if value == 1 { "" } else { "s" };
+
+    if diff >= 0 {
+        format!("{value} {unit}{plural} ago")
+    } else {
+        format!("in {value} {unit}{plural}")
+    }
 }
