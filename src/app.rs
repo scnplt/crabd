@@ -1,5 +1,6 @@
 use crate::components::container_info_block::{ContainerData, ContainerInfoBlock};
 use crate::components::container_table::{ContainerTable, ContainerTableRow};
+use crate::components::image_table::{ImageTable, ImageTableRow};
 use crate::components::info_block::ScrollableInfoBlock;
 use crate::components::network_table::{NetworkTable, NetworkTableRow};
 use crate::components::volume_table::{VolumeTable, VolumeTableRow};
@@ -28,6 +29,7 @@ pub struct App {
     container_info: Option<Box<dyn ScrollableInfoBlock<Data = ContainerData>>>,
     volume_table: VolumeTable,
     network_table: NetworkTable,
+    image_table: ImageTable,
 }
 
 impl App {
@@ -41,6 +43,7 @@ impl App {
             container_info: None,
             volume_table: VolumeTable::default(),
             network_table: NetworkTable::default(),
+            image_table: ImageTable::default(),
         })
     }
 
@@ -88,6 +91,7 @@ impl App {
             SelectedTab::Containers => self.container_table.draw(frame, area)?,
             SelectedTab::Volumes => self.volume_table.draw(frame, area)?,
             SelectedTab::Networks => self.network_table.draw(frame, area)?,
+            SelectedTab::Images => self.image_table.draw(frame, area)?,
             _ => frame.render_widget(Text::from("TODO"), area),
         }
         Ok(())
@@ -131,6 +135,12 @@ impl App {
                         self.network_table.show_network_in_use_err(e.to_string());
                     }
                 }
+                AppEvent::UpdateImages => self.update_images().await?,
+                AppEvent::RemoveImage(id, force) => {
+                    if let Err(e) = self.docker_client.remove_image(&id, force).await {
+                        self.image_table.show_remove_img_err(e.to_string());
+                    }
+                }
                 AppEvent::Back => self.container_info = None,
             },
         }
@@ -159,6 +169,7 @@ impl App {
                 SelectedTab::Containers => self.container_table.handle_key_event(key_event)?,
                 SelectedTab::Volumes => self.volume_table.handle_key_event(key_event)?,
                 SelectedTab::Networks => self.network_table.handle_key_event(key_event)?,
+                SelectedTab::Images => self.image_table.handle_key_event(key_event)?,
                 _ => None,
             },
         };
@@ -192,6 +203,7 @@ impl App {
             SelectedTab::Containers => self.container_table.tick()?,
             SelectedTab::Volumes => self.volume_table.tick()?,
             SelectedTab::Networks => self.network_table.tick()?,
+            SelectedTab::Images => self.image_table.tick()?,
             _ => None,
         };
 
@@ -238,6 +250,14 @@ impl App {
         if let Ok(result) = self.docker_client.list_networks().await {
             let networks = NetworkTableRow::from_list(result);
             self.network_table.update_with_items(networks);
+        }
+        Ok(())
+    }
+
+    async fn update_images(&mut self) -> Result<()> {
+        if let Ok(result) = self.docker_client.list_images().await {
+            let images = ImageTableRow::from_list(result);
+            self.image_table.update_with_items(images);
         }
         Ok(())
     }
