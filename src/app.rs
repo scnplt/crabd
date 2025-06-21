@@ -11,7 +11,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::palette::tailwind;
 use ratatui::style::{Color, Stylize};
-use ratatui::text::{Line, Text};
+use ratatui::text::Line;
 use ratatui::widgets::Tabs;
 use ratatui::{
     DefaultTerminal,
@@ -92,7 +92,6 @@ impl App {
             SelectedTab::Volumes => self.volume_table.draw(frame, area)?,
             SelectedTab::Networks => self.network_table.draw(frame, area)?,
             SelectedTab::Images => self.image_table.draw(frame, area)?,
-            _ => frame.render_widget(Text::from("TODO"), area),
         }
         Ok(())
     }
@@ -169,8 +168,7 @@ impl App {
                 SelectedTab::Containers => self.container_table.handle_key_event(key_event)?,
                 SelectedTab::Volumes => self.volume_table.handle_key_event(key_event)?,
                 SelectedTab::Networks => self.network_table.handle_key_event(key_event)?,
-                SelectedTab::Images => self.image_table.handle_key_event(key_event)?,
-                _ => None,
+                SelectedTab::Images => self.image_table.handle_key_event(key_event)?
             },
         };
 
@@ -203,8 +201,7 @@ impl App {
             SelectedTab::Containers => self.container_table.tick()?,
             SelectedTab::Volumes => self.volume_table.tick()?,
             SelectedTab::Networks => self.network_table.tick()?,
-            SelectedTab::Images => self.image_table.tick()?,
-            _ => None,
+            SelectedTab::Images => self.image_table.tick()?
         };
 
         Ok(event)
@@ -282,9 +279,6 @@ enum SelectedTab {
 
     #[strum(to_string = "Images")]
     Images,
-
-    #[strum(to_string = "Help")]
-    Help,
 }
 
 impl SelectedTab {
