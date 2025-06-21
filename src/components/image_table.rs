@@ -132,7 +132,7 @@ impl ImageTable {
             Constraint::Length(15),
             Constraint::Min(15),
             Constraint::Min(0),
-            Constraint::Min(27),
+            Constraint::Length(27),
         ];
 
         let table = Table::new(rows, widths)
@@ -181,7 +181,7 @@ impl ImageTable {
         }
     }
 
-    pub fn show_remove_img_err(&mut self, err: String) {
+    pub fn show_remove_image_err(&mut self, err: String) {
         let err_msg = Regex::new(REGEX_DELETE_IMG_ERR).ok()
             .and_then(|re| re.find(&err))
             .map(|m| m.as_str())

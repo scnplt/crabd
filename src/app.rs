@@ -48,6 +48,8 @@ impl App {
     }
 
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+        self.update_containers().await?;
+
         while self.running {
             terminal.draw(|frame| self.draw(frame, frame.area()))?;
             self.process_next_event().await?;
@@ -117,29 +119,14 @@ impl App {
                 AppEvent::RestartContainer(id) => self.docker_client.restart_container(&id).await?,
                 AppEvent::StopContainer(id) => self.docker_client.stop_container(&id).await?,
                 AppEvent::KillContainer(id) => self.docker_client.kill_container(&id).await?,
-                AppEvent::RemoveContainer(id) => {
-                    self.container_info = None;
-                    self.docker_client.remove_container(&id).await?
-                }
+                AppEvent::RemoveContainer(id) => self.remove_container(id).await?,
                 AppEvent::GoToContainerDetails(id) => self.go_to_container_info(id).await?,
                 AppEvent::UpdateVolumes => self.update_volumes().await?,
-                AppEvent::RemoveVolume(name, force) => {
-                    if let Err(e) = self.docker_client.remove_volume(&name, force).await {
-                        self.volume_table.show_volume_in_use_err(e.to_string());
-                    }
-                }
+                AppEvent::RemoveVolume(name, force) => self.remove_volume(name, force).await?,
                 AppEvent::UpdateNetworks => self.update_networks().await?,
-                AppEvent::RemoveNetwork(name) => {
-                    if let Err(e) = self.docker_client.remove_network(&name).await {
-                        self.network_table.show_network_in_use_err(e.to_string());
-                    }
-                }
+                AppEvent::RemoveNetwork(name) => self.remove_network(name).await?,
                 AppEvent::UpdateImages => self.update_images().await?,
-                AppEvent::RemoveImage(id, force) => {
-                    if let Err(e) = self.docker_client.remove_image(&id, force).await {
-                        self.image_table.show_remove_img_err(e.to_string());
-                    }
-                }
+                AppEvent::RemoveImage(id, force) => self.remove_image(id, force).await?,
                 AppEvent::Back => self.container_info = None,
             },
         }
@@ -255,6 +242,33 @@ impl App {
         if let Ok(result) = self.docker_client.list_images().await {
             let images = ImageTableRow::from_list(result);
             self.image_table.update_with_items(images);
+        }
+        Ok(())
+    }
+
+    async fn remove_container(&mut self, container_id: String) -> Result<()> {
+        self.container_info = None;
+        self.docker_client.remove_container(&container_id).await?;
+        Ok(())
+    }
+
+    async fn remove_volume(&mut self, name: String, force: bool) -> Result<()> {
+        if let Err(e) = self.docker_client.remove_volume(&name, force).await {
+            self.volume_table.show_remove_volume_err(e.to_string());
+        }
+        Ok(())
+    }
+
+    async fn remove_network(&mut self, name: String) -> Result<()> {
+        if let Err(e) = self.docker_client.remove_network(&name).await {
+            self.network_table.show_remove_network_err(e.to_string());
+        }
+        Ok(())
+    }
+
+    async fn remove_image(&mut self, id: String, force: bool) -> Result<()> {
+        if let Err(e) = self.docker_client.remove_image(&id, force).await {
+            self.image_table.show_remove_image_err(e.to_string());
         }
         Ok(())
     }

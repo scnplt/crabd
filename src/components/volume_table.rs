@@ -177,7 +177,7 @@ impl VolumeTable {
         }
     }
 
-    pub fn show_volume_in_use_err(&mut self, err: String) {
+    pub fn show_remove_volume_err(&mut self, err: String) {
         let err_msg = Regex::new(REGEX_VOLUME_IN_USE).ok()
             .and_then(|re| re.captures(&err))
             .and_then(|caps| caps.get(1))
