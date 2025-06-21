@@ -1,35 +1,18 @@
-mod docker;
-mod views;
 mod app;
-
-#[macro_use]
-mod logger;
+mod components;
+mod docker;
+mod event;
+mod utils;
 
 use crate::app::App;
-use crate::docker::client::DockerClient;
-
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use tokio::sync::mpsc;
+use color_eyre::eyre::Result;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>>{
-    let docker = DockerClient::new()?;
-    let containers = Arc::new(Mutex::new(docker.list_containers().await.unwrap()));
-    let mut app = App::new(docker.clone(), containers).await;
-    let (tx, mut rx) = mpsc::channel(32);
-
-    tokio::spawn(async move {
-        loop {
-            let new_containers = docker.list_containers().await.unwrap();
-            let _ = tx.send(new_containers).await;
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-    });
-
-    let mut terminal = ratatui::init();
-    let _ = app.run(&mut terminal, &mut rx).await;
-
+async fn main() -> Result<()> {
+    color_eyre::install()?;
+    let terminal = ratatui::init();
+    let app = App::new()?;
+    let result = app.run(terminal).await;
     ratatui::restore();
-    Ok(())
+    result
 }
