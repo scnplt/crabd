@@ -129,7 +129,7 @@ impl NetworkTable {
             Constraint::Length(15),
             Constraint::Min(15),
             Constraint::Min(0),
-            Constraint::Min(27),
+            Constraint::Length(27),
         ];
 
         let table = Table::new(rows, widths)
@@ -178,7 +178,7 @@ impl NetworkTable {
         }
     }
 
-    pub fn show_network_in_use_err(&mut self, err: String) {
+    pub fn show_remove_network_err(&mut self, err: String) {
         let err_msg = Regex::new(REGEX_NETWORK_IN_USE).ok()
             .and_then(|re| re.captures(&err))
             .and_then(|caps| caps.get(1))
