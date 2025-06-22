@@ -2,12 +2,19 @@ use bollard::secret::ImageSummary;
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    layout::{Constraint, Layout, Rect}, style::{Style, Stylize}, text::Text, widgets::{Cell, HighlightSpacing, Row, ScrollbarState, Table, TableState}, Frame
+    Frame,
+    layout::{Constraint, Rect},
+    style::{Style, Stylize},
+    text::Text,
+    widgets::{Cell, HighlightSpacing, Row, Table},
 };
 
 use crate::{
-    components::common::{render_footer, render_scrollbar, time_ago_string, TableStyle},
     event::AppEvent,
+    ui::{
+        common::{TableStyle, render_footer, time_ago_string},
+        resource_table::{ResourceTable, ResourceTableInfo},
+    },
 };
 
 use regex::Regex;
@@ -18,14 +25,10 @@ const DEFAULT_FOOTER: &str = " <Del/D> remove | <F> force remove";
 
 #[derive(Default)]
 pub struct ImageTable {
-    state: TableState,
-    items: Vec<ImageTableRow>,
-    vertical_state: ScrollbarState,
     style: TableStyle,
-    row_heights: Vec<usize>,
-    vertical_scroll: usize,
     skipped_tick_count_for_refresh: u8,
-    err: Option<String>
+    info: ResourceTableInfo<ImageTableRow>,
+    err: Option<String>,
 }
 
 #[derive(Default)]
@@ -33,73 +36,14 @@ pub struct ImageTableRow {
     id: String,
     tags: String,
     size: String,
-    created: String
+    created: String,
 }
 
-impl ImageTable {
-    pub fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<Option<AppEvent>> {
-        if self.err.is_some() {
-            self.err = None;
-            return Ok(None);
-        }
+impl ResourceTable for ImageTable {
+    type RowType = ImageTableRow;
 
-        let mut event = None;
-        match key_event.code {
-            KeyCode::Esc | KeyCode::Char('q') => event = Some(AppEvent::Quit),
-            KeyCode::Down | KeyCode::Char('j') => self.next_row(),
-            KeyCode::Up | KeyCode::Char('k') => self.previous_row(),
-            KeyCode::Delete | KeyCode::Char('d') => {
-                if let Some(image) = self.get_selected_image() {
-                    event = Some(AppEvent::RemoveImage(image.id.clone(), false))
-                }
-            }
-            KeyCode::Char('f') => {
-                if let Some(image) = self.get_selected_image() {
-                    event = Some(AppEvent::RemoveImage(image.id.clone(), true))
-                }
-            }
-            _ => {}
-        }
-        Ok(event)
-    }
-
-    fn next_row(&mut self) {
-        let index = self.state.selected().map_or(0, |i| if i >= self.items.len() - 1 { 0 } else { i + 1 });
-        self.select_row(index);
-    }
-
-    fn previous_row(&mut self) {
-        let index = self.state.selected().map_or(0, |i| if i == 0 { self.items.len() - 1 } else { i - 1 });
-        self.select_row(index);
-    }
-
-    fn select_row(&mut self, index: usize) {
-        self.state.select(Some(index));
-        self.vertical_scroll = self.row_heights.iter().take(index).sum();
-    }
-
-    fn get_selected_image(&self) -> Option<&ImageTableRow> {
-        self.state.selected().and_then(|index| self.items.get(index))
-    }
-
-    pub fn draw(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
-        use Constraint::{Length, Min};
-
-        let vertical_layout = Layout::vertical([Min(0), Length(3)]);
-        let [content_area, footer_area] = vertical_layout.areas(area);
-
-        let horizontal_content_layout = Layout::horizontal([Min(0), Length(1)]);
-        let [table_area, scrollbar_area] = horizontal_content_layout.areas(content_area);
-
-        self.render_table(frame, table_area);
-
-        self.update_scroll_state();
-
-        render_scrollbar(frame, scrollbar_area, &mut self.vertical_state, true);
-
-        self.render_footer(frame, footer_area);
-
-        Ok(())
+    fn get_table_info(&mut self) -> &mut ResourceTableInfo<Self::RowType> {
+        &mut self.info
     }
 
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
@@ -109,16 +53,16 @@ impl ImageTable {
             .style(self.style.header_style)
             .height(1);
 
-        self.row_heights.clear();
+        self.info.row_heights.clear();
 
-        let rows = self.items.iter().enumerate().map(|(index, image)| {
+        let rows = self.info.items.iter().enumerate().map(|(index, image)| {
             let row_style = if index % 2 == 0 { self.style.row_style } else { self.style.alt_row_style };
             let item = image.ref_array();
             let tags: Vec<&str> = image.tags.split("\n").filter(|s| !s.is_empty()).collect();
 
             let height = if tags.is_empty() { 3 } else { tags.len() + 2 };
-            if index < self.items.len() - 1 {
-                self.row_heights.push(height);
+            if index < self.info.items.len() - 1 {
+                self.info.row_heights.push(height);
             }
 
             item.into_iter()
@@ -141,7 +85,7 @@ impl ImageTable {
             .highlight_symbol(Text::from(vec!["".into(), " ● ".into()]))
             .highlight_spacing(HighlightSpacing::Always);
 
-        frame.render_stateful_widget(table, area, &mut self.state);
+        frame.render_stateful_widget(table, area, &mut self.info.state);
     }
 
     fn render_footer(&mut self, frame: &mut Frame, area: Rect) {
@@ -155,12 +99,28 @@ impl ImageTable {
 
         render_footer(frame, area, footer_text, border_style);
     }
+}
 
-    fn update_scroll_state(&mut self) {
-        let content_height = self.row_heights.iter().sum::<usize>();
-        self.vertical_state = self.vertical_state
-            .content_length(content_height)
-            .position(self.vertical_scroll);
+impl ImageTable {
+    pub fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<Option<AppEvent>> {
+        if self.err.is_some() {
+            self.err = None;
+            return Ok(None);
+        }
+
+        let event = match key_event.code {
+            KeyCode::Delete | KeyCode::Char('d') => self.get_selected_row()
+                .map(|i| AppEvent::RemoveImage(i.id.clone(), false)),
+            KeyCode::Char('f') => self.get_selected_row()
+                .map(|i| AppEvent::RemoveImage(i.id.clone(), true)),
+            _ => self.handle_nav_key_event(key_event)?,
+        };
+
+        Ok(event)
+    }
+
+    pub fn draw(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
+        self.draw_default(frame, area)
     }
 
     pub fn tick(&mut self) -> Result<Option<AppEvent>> {
@@ -171,14 +131,6 @@ impl ImageTable {
 
         self.skipped_tick_count_for_refresh = 0;
         Ok(Some(AppEvent::UpdateImages))
-    }
-
-    pub fn update_with_items(&mut self, items: Vec<ImageTableRow>) {
-        let is_empty_before_update = self.items.is_empty();
-        self.items = items;
-        if is_empty_before_update && !self.items.is_empty() {
-            self.select_row(0);
-        }
     }
 
     pub fn show_remove_image_err(&mut self, err: String) {
