@@ -1,11 +1,12 @@
-use crate::components::container_info_block::{ContainerData, ContainerInfoBlock};
-use crate::components::container_table::{ContainerTable, ContainerTableRow};
-use crate::components::image_table::{ImageTable, ImageTableRow};
-use crate::components::info_block::ScrollableInfoBlock;
-use crate::components::network_table::{NetworkTable, NetworkTableRow};
-use crate::components::volume_table::{VolumeTable, VolumeTableRow};
 use crate::docker::client::DockerClient;
 use crate::event::{AppEvent, Event, EventHandler};
+use crate::ui::container_info_block::{ContainerData, ContainerInfoBlock};
+use crate::ui::container_table::{ContainerTable, ContainerTableRow};
+use crate::ui::image_table::{ImageTable, ImageTableRow};
+use crate::ui::info_block::ScrollableInfoBlock;
+use crate::ui::network_table::{NetworkTable, NetworkTableRow};
+use crate::ui::resource_table::ResourceTable;
+use crate::ui::volume_table::{VolumeTable, VolumeTableRow};
 use color_eyre::eyre::Result;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -116,7 +117,7 @@ impl App {
                 AppEvent::Quit => self.quit(),
                 AppEvent::UpdateContainers => self.update_containers().await?,
                 AppEvent::UpdateContainerInfo(id) => self.update_container_details(id).await?,
-                AppEvent::RestartContainer(id) => self.docker_client.restart_container(&id).await?,
+                AppEvent::RestartContainer(id) => self.restart_container(id).await?,
                 AppEvent::StopContainer(id) => self.docker_client.stop_container(&id).await?,
                 AppEvent::KillContainer(id) => self.docker_client.kill_container(&id).await?,
                 AppEvent::RemoveContainer(id) => self.remove_container(id).await?,
@@ -135,7 +136,7 @@ impl App {
 
     fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<Option<AppEvent>> {
         if key_event.code == KeyCode::Char('c') && key_event.modifiers == KeyModifiers::CONTROL {
-            return Ok(Some(AppEvent::Quit))
+            return Ok(Some(AppEvent::Quit));
         }
 
         if let Some(info) = self.container_info.as_mut() {
@@ -155,7 +156,7 @@ impl App {
                 SelectedTab::Containers => self.container_table.handle_key_event(key_event)?,
                 SelectedTab::Volumes => self.volume_table.handle_key_event(key_event)?,
                 SelectedTab::Networks => self.network_table.handle_key_event(key_event)?,
-                SelectedTab::Images => self.image_table.handle_key_event(key_event)?
+                SelectedTab::Images => self.image_table.handle_key_event(key_event)?,
             },
         };
 
@@ -188,7 +189,7 @@ impl App {
             SelectedTab::Containers => self.container_table.tick()?,
             SelectedTab::Volumes => self.volume_table.tick()?,
             SelectedTab::Networks => self.network_table.tick()?,
-            SelectedTab::Images => self.image_table.tick()?
+            SelectedTab::Images => self.image_table.tick()?,
         };
 
         Ok(event)
@@ -214,6 +215,20 @@ impl App {
         Ok(())
     }
 
+    async fn restart_container(&mut self, container_id: String) -> Result<()> {
+        if let Err(e) = self.docker_client.restart_container(&container_id).await {
+            self.container_table.show_container_err(e.to_string());
+        }
+        Ok(())
+    }
+
+    async fn remove_container(&mut self, container_id: String) -> Result<()> {
+        if let Err(e) = self.docker_client.remove_container(&container_id).await {
+            self.container_table.show_container_err(e.to_string());
+        }
+        Ok(())
+    }
+
     async fn update_containers(&mut self) -> Result<()> {
         if let Ok(result) = self.docker_client.list_containers().await {
             let containers = ContainerTableRow::from_list(result);
@@ -229,7 +244,7 @@ impl App {
         }
         Ok(())
     }
-    
+
     async fn update_networks(&mut self) -> Result<()> {
         if let Ok(result) = self.docker_client.list_networks().await {
             let networks = NetworkTableRow::from_list(result);
@@ -243,12 +258,6 @@ impl App {
             let images = ImageTableRow::from_list(result);
             self.image_table.update_with_items(images);
         }
-        Ok(())
-    }
-
-    async fn remove_container(&mut self, container_id: String) -> Result<()> {
-        self.container_info = None;
-        self.docker_client.remove_container(&container_id).await?;
         Ok(())
     }
 
