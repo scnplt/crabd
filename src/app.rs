@@ -16,7 +16,7 @@ use ratatui::text::Line;
 use ratatui::widgets::Tabs;
 use ratatui::{
     DefaultTerminal,
-    crossterm::event::{Event::Key, KeyCode, KeyEvent, KeyModifiers},
+    crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
 };
 use strum::IntoEnumIterator;
 use strum_macros::{Display, EnumIter, FromRepr};
@@ -106,11 +106,9 @@ impl App {
                     self.events.send(event)
                 }
             }
-            Event::Crossterm(event) => {
-                if let Key(key_event) = event {
-                    if let Some(event) = self.handle_key_event(key_event)? {
-                        self.events.send(event);
-                    }
+            Event::Crossterm(key_event) => {
+                if let Some(event) = self.handle_key_event(key_event)? {
+                    self.events.send(event);
                 }
             }
             Event::App(app_event) => match app_event {
