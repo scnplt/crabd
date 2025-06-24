@@ -1,12 +1,10 @@
 name: Build
 
 on:
-  push:
-    branches:
-      - dev
   pull_request:
     branches:
       - main
+      - dev
 
 env:
   CARGO_TERM_COLOR: always
