@@ -2,8 +2,18 @@
 name = "crabd"
 version = "0.2.0-beta.1"
 authors = ["Sertan Canpolat <58915038+scnplt@users.noreply.github.com>"]
-license = "Apache-2.0"
+license-file = "LICENSE.txt"
 edition = "2024"
+readme = "README.md"
+description = "A terminal-based Docker resource manager"
+homepage = "https://github.com/scnplt/crabd"
+repository = "https://github.com/scnplt/crabd"
+keywords = ["docker","tui","ratatui"]
+categories = ["command-line-utilities"]
+exclude = ["assets/*", ".github/*"]
+
+[badges]
+maintenance = { status = "actively-developed" }
 
 [dependencies]
 bollard = "0.18.1"
