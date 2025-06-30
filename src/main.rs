@@ -1,5 +1,5 @@
 mod app;
-mod components;
+mod ui;
 mod docker;
 mod event;
 mod utils;

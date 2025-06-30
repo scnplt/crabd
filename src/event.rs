@@ -1,6 +1,7 @@
 use color_eyre::eyre::{OptionExt, Result};
+use crossterm::event::KeyEventKind;
 use futures::{FutureExt, StreamExt};
-use ratatui::crossterm::event::Event as CrosstermEvent;
+use ratatui::crossterm::event::{KeyEvent, Event::Key};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -9,7 +10,7 @@ const TICK_FPS: f64 = 30.0;
 #[derive(Clone, Debug)]
 pub enum Event {
     Tick,
-    Crossterm(CrosstermEvent),
+    Crossterm(KeyEvent),
     App(AppEvent),
 }
 
@@ -76,7 +77,13 @@ impl EventTask {
             tokio::select! {
                 _ = self.sender.closed() => break,
                 _ = tick_delay => self.send(Event::Tick),
-                Some(Ok(event)) = crossterm_event => self.send(Event::Crossterm(event)),
+                Some(Ok(event)) = crossterm_event => {
+                    if let Key(key) = event {
+                        if key.kind == KeyEventKind::Press {
+                            self.send(Event::Crossterm(key))
+                        }
+                    }
+                }
             };
         }
 
