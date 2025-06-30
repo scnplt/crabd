@@ -15,33 +15,20 @@ A terminal-based Docker resource manager written in Rust. Easily view, manage, a
 
 - Docker daemon running on your system
 - [Rust toolchain](https://rustup.rs/) (for building from source)
-- For static builds: musl target (`rustup target add x86_64-unknown-linux-musl`)
 
 ## Installation
 
-### With prebuilt binary file (Linux x86_64):
-
-Download the prebuilt binary file and make it executable:
+### Cargo (Rust package manager):
 
 ```bash
-# Replace RELEASE_VERSION with the version you want to install
-curl -L https://github.com/scnplt/crabd/releases/download/RELEASE_VERSION/crabd-linux -o crabd && chmod +x crabd
+cargo install crabd && crabd
 ```
 
-Run:
-
-```bash
-./crabd
-```
-
-### Or build from source:
+### Build from source:
 
 ```bash
 git clone https://github.com/scnplt/crabd.git && cd crabd
-cargo build --release --target=x86_64-unknown-linux-musl
-
-# Run
-./target/x86_64-unknown-linux-musl/release/crabd
+cargo run --release
 ```
 
 ## Keymap 
