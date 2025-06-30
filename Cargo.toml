@@ -10,7 +10,7 @@ homepage = "https://github.com/scnplt/crabd"
 repository = "https://github.com/scnplt/crabd"
 keywords = ["docker","tui","ratatui"]
 categories = ["command-line-utilities"]
-exclude = ["assets/*", ".github/*"]
+include = ["**/*.rs"]
 
 [badges]
 maintenance = { status = "actively-developed" }
