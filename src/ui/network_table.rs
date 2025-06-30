@@ -1,16 +1,18 @@
 use super::common::TableStyle;
-use super::common::{render_footer, render_scrollbar};
+use super::common::render_footer;
 use crate::event::AppEvent;
+use crate::ui::resource_table::ResourceTable;
+use crate::ui::resource_table::ResourceTableInfo;
 use bollard::secret::Network;
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::style::Stylize;
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Rect},
     style::Style,
     text::Text,
-    widgets::{Cell, HighlightSpacing, Row, ScrollbarState, Table, TableState},
+    widgets::{Cell, HighlightSpacing, Row, Table},
 };
 use regex::Regex;
 
@@ -22,13 +24,9 @@ const DEFAULT_FOOTER: &str = " <Del/D> remove";
 
 #[derive(Default)]
 pub struct NetworkTable {
-    state: TableState,
-    items: Vec<NetworkTableRow>,
-    vertical_state: ScrollbarState,
     style: TableStyle,
-    row_heights: Vec<usize>,
-    vertical_scroll: usize,
     skipped_tick_count_for_refresh: u8,
+    info: ResourceTableInfo<NetworkTableRow>,
     err: Option<String>,
 }
 
@@ -40,65 +38,11 @@ pub struct NetworkTableRow {
     created_at: String,
 }
 
-impl NetworkTable {
-    pub fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<Option<AppEvent>> {
-        if self.err.is_some() {
-            self.err = None;
-            return Ok(None);
-        }
+impl ResourceTable for NetworkTable {
+    type RowType = NetworkTableRow;
 
-        let mut event = None;
-        match key_event.code {
-            KeyCode::Esc | KeyCode::Char('q') => event = Some(AppEvent::Quit),
-            KeyCode::Down | KeyCode::Char('j') => self.next_row(),
-            KeyCode::Up | KeyCode::Char('k') => self.previous_row(),
-            KeyCode::Delete | KeyCode::Char('d') => {
-                if let Some(network) = self.get_selected_network() {
-                    event = Some(AppEvent::RemoveNetwork(network.name.clone()))
-                }
-            }
-            _ => {}
-        }
-        Ok(event)
-    }
-
-    fn next_row(&mut self) {
-        let index = self.state.selected().map_or(0, |i| if i >= self.items.len() - 1 { 0 } else { i + 1 });
-        self.select_row(index);
-    }
-
-    fn previous_row(&mut self) {
-        let index = self.state.selected().map_or(0, |i| if i == 0 { self.items.len() - 1 } else { i - 1 });
-        self.select_row(index);
-    }
-
-    fn select_row(&mut self, index: usize) {
-        self.state.select(Some(index));
-        self.vertical_scroll = self.row_heights.iter().take(index).sum();
-    }
-
-    fn get_selected_network(&self) -> Option<&NetworkTableRow> {
-        self.state.selected().and_then(|index| self.items.get(index))
-    }
-
-    pub fn draw(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
-        use Constraint::{Length, Min};
-
-        let vertical_layout = Layout::vertical([Min(0), Length(3)]);
-        let [content_area, footer_area] = vertical_layout.areas(area);
-
-        let horizontal_content_layout = Layout::horizontal([Min(0), Length(1)]);
-        let [table_area, scrollbar_area] = horizontal_content_layout.areas(content_area);
-
-        self.render_table(frame, table_area);
-
-        self.update_scroll_state();
-
-        render_scrollbar(frame, scrollbar_area, &mut self.vertical_state, true);
-
-        self.render_footer(frame, footer_area);
-
-        Ok(())
+    fn get_table_info(&mut self) -> &mut ResourceTableInfo<Self::RowType> {
+        &mut self.info
     }
 
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
@@ -108,14 +52,14 @@ impl NetworkTable {
             .style(self.style.header_style)
             .height(1);
 
-        self.row_heights.clear();
+        self.info.row_heights.clear();
 
-        let rows = self.items.iter().enumerate().map(|(index, network)| {
-            let row_style = if index % 2 == 0 { self.style.row_style } else { self.style.alt_row_style };
+        let rows = self.info.items.iter().enumerate().map(|(index, network)| {
+            let row_style = if index % 2 == 0 { self.style.row_style} else { self.style.alt_row_style };
             let item = network.ref_array();
 
-            if index < self.items.len() - 1 {
-                self.row_heights.push(ROW_HEIGHT);
+            if index < self.info.items.len() - 1 {
+                self.info.row_heights.push(ROW_HEIGHT);
             }
 
             item.into_iter()
@@ -138,7 +82,7 @@ impl NetworkTable {
             .highlight_symbol(Text::from(vec!["".into(), " ● ".into()]))
             .highlight_spacing(HighlightSpacing::Always);
 
-        frame.render_stateful_widget(table, area, &mut self.state);
+        frame.render_stateful_widget(table, area, &mut self.info.state);
     }
 
     fn render_footer(&mut self, frame: &mut Frame, area: Rect) {
@@ -152,12 +96,26 @@ impl NetworkTable {
 
         render_footer(frame, area, footer_text, border_style);
     }
+}
 
-    fn update_scroll_state(&mut self) {
-        let content_height = self.row_heights.iter().sum::<usize>();
-        self.vertical_state = self.vertical_state
-            .content_length(content_height)
-            .position(self.vertical_scroll);
+impl NetworkTable {
+    pub fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<Option<AppEvent>> {
+        if self.err.is_some() {
+            self.err = None;
+            return Ok(None);
+        }
+
+        let event = match key_event.code {
+            KeyCode::Delete | KeyCode::Char('d') => self.get_selected_row()
+                .map(|n| AppEvent::RemoveNetwork(n.name.clone())),
+            _ => self.handle_nav_key_event(key_event)?,
+        };
+
+        Ok(event)
+    }
+
+    pub fn draw(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
+        self.draw_default(frame, area)
     }
 
     pub fn tick(&mut self) -> Result<Option<AppEvent>> {
@@ -168,14 +126,6 @@ impl NetworkTable {
 
         self.skipped_tick_count_for_refresh = 0;
         Ok(Some(AppEvent::UpdateNetworks))
-    }
-
-    pub fn update_with_items(&mut self, items: Vec<NetworkTableRow>) {
-        let is_empty_before_update = self.items.is_empty();
-        self.items = items;
-        if is_empty_before_update && !self.items.is_empty() {
-            self.select_row(0);
-        }
     }
 
     pub fn show_remove_network_err(&mut self, err: String) {
