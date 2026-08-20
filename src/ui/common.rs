@@ -109,7 +109,11 @@ pub fn time_ago_string(epoch_secs: i64) -> String {
         .as_secs() as i64;
 
     let diff = now - epoch_secs;
-    let abs_diff = diff.abs();
+    format_time_ago(diff)
+}
+
+fn format_time_ago(diff_secs: i64) -> String {
+    let abs_diff = diff_secs.abs();
 
     let (value, unit) = if abs_diff >= 31_536_000 {
         (abs_diff / 31_536_000, "year")
@@ -127,7 +131,7 @@ pub fn time_ago_string(epoch_secs: i64) -> String {
 
     let plural = if value == 1 { "" } else { "s" };
 
-    if diff >= 0 {
+    if diff_secs >= 0 {
         format!("{value} {unit}{plural} ago")
     } else {
         format!("in {value} {unit}{plural}")
@@ -151,5 +155,40 @@ mod tests {
             assert!(!ticker.should_refresh());
         }
         assert!(ticker.should_refresh());
+    }
+
+    #[test]
+    fn format_time_ago_unit_boundaries() {
+        assert_eq!(format_time_ago(59), "59 seconds ago");
+        assert_eq!(format_time_ago(60), "1 minute ago");
+        assert_eq!(format_time_ago(3_600), "1 hour ago");
+        assert_eq!(format_time_ago(86_400), "1 day ago");
+        assert_eq!(format_time_ago(2_592_000), "1 month ago");
+        assert_eq!(format_time_ago(31_536_000), "1 year ago");
+    }
+
+    #[test]
+    fn format_time_ago_plural_vs_singular() {
+        assert_eq!(format_time_ago(120), "2 minutes ago");
+    }
+
+    #[test]
+    fn format_time_ago_zero_diff() {
+        assert_eq!(format_time_ago(0), "0 seconds ago");
+    }
+
+    #[test]
+    fn format_time_ago_negative_diff_is_in_the_future() {
+        assert_eq!(format_time_ago(-300), "in 5 minutes");
+    }
+
+    #[test]
+    fn time_ago_string_smoke_test_for_now() {
+        let now_epoch = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_secs() as i64;
+
+        assert!(time_ago_string(now_epoch).starts_with("0 second"));
     }
 }

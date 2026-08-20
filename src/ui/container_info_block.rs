@@ -431,4 +431,157 @@ mod tests {
         assert!(!lines.iter().any(|l| l.starts_with("Env:")));
         assert!(!lines.iter().any(|l| l.starts_with("Labels:")));
     }
+
+    #[test]
+    fn format_list_returns_none_for_empty_or_blank_entries() {
+        assert!(format_list(vec![]).is_none());
+        assert!(format_list(vec!["".to_string(), "".to_string()]).is_none());
+    }
+
+    #[test]
+    fn format_list_sorts_and_prefixes_entries() {
+        let result = format_list(vec!["charlie".to_string(), "alpha".to_string()]).unwrap();
+        let contents: Vec<String> = result.into_iter().map(|(_, c)| c).collect();
+        assert_eq!(
+            contents,
+            vec![" - alpha".to_string(), " - charlie".to_string()]
+        );
+    }
+
+    #[test]
+    fn get_footer_text_variants() {
+        let running_text = get_footer_text(true);
+        assert!(running_text.contains("<R> restart | <S> stop | <X> kill"));
+        assert!(running_text.contains("<Del/D> remove"));
+
+        let stopped_text = get_footer_text(false);
+        assert!(stopped_text.contains("<R> start"));
+        assert!(stopped_text.contains("<Del/D> remove"));
+    }
+
+    fn container_with_id(id: &str) -> ContainerInspectResponse {
+        ContainerInspectResponse {
+            id: Some(id.to_string()),
+            name: Some(format!("/{id}")),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn handle_key_event_dispatches_resource_actions() {
+        let mut block = ContainerInfoBlock {
+            data: ContainerData::from(container_with_id("container-id")),
+            ..Default::default()
+        };
+
+        let event = block
+            .handle_key_event(KeyEvent::from(KeyCode::Char('d')))
+            .unwrap();
+        assert!(matches!(event, Some(AppEvent::RemoveContainer(id)) if id == "container-id"));
+
+        let event = block
+            .handle_key_event(KeyEvent::from(KeyCode::Delete))
+            .unwrap();
+        assert!(matches!(event, Some(AppEvent::RemoveContainer(id)) if id == "container-id"));
+
+        let event = block
+            .handle_key_event(KeyEvent::from(KeyCode::Char('r')))
+            .unwrap();
+        assert!(matches!(event, Some(AppEvent::RestartContainer(id)) if id == "container-id"));
+
+        let event = block
+            .handle_key_event(KeyEvent::from(KeyCode::Char('s')))
+            .unwrap();
+        assert!(matches!(event, Some(AppEvent::StopContainer(id)) if id == "container-id"));
+
+        let event = block
+            .handle_key_event(KeyEvent::from(KeyCode::Char('x')))
+            .unwrap();
+        assert!(matches!(event, Some(AppEvent::KillContainer(id)) if id == "container-id"));
+
+        let event = block
+            .handle_key_event(KeyEvent::from(KeyCode::Char('q')))
+            .unwrap();
+        assert!(matches!(event, Some(AppEvent::Back)));
+
+        let event = block
+            .handle_key_event(KeyEvent::from(KeyCode::Esc))
+            .unwrap();
+        assert!(matches!(event, Some(AppEvent::Back)));
+    }
+
+    #[test]
+    fn tick_fires_exactly_once_every_twelve_ticks() {
+        let mut block = ContainerInfoBlock {
+            data: ContainerData::from(container_with_id("container-id")),
+            ..Default::default()
+        };
+
+        let mut fired = 0;
+        for _ in 0..12 {
+            if block.tick().unwrap().is_some() {
+                fired += 1;
+            }
+        }
+
+        assert_eq!(fired, 1);
+    }
+
+    #[test]
+    fn get_content_as_lines_includes_populated_sections_sorted() {
+        let container = ContainerInspectResponse {
+            id: Some("container-id".to_string()),
+            name: Some("/my-container".to_string()),
+            mounts: Some(vec![bollard::secret::MountPoint {
+                typ: Some(bollard::secret::MountPointTypeEnum::VOLUME),
+                name: Some("my-volume".to_string()),
+                destination: Some("/data".to_string()),
+                ..Default::default()
+            }]),
+            config: Some(ContainerConfig {
+                env: Some(vec!["B=2".to_string(), "A=1".to_string()]),
+                labels: Some({
+                    let mut labels = HashMap::new();
+                    labels.insert("z".to_string(), "last".to_string());
+                    labels.insert("a".to_string(), "first".to_string());
+                    labels
+                }),
+                ..Default::default()
+            }),
+            network_settings: Some(bollard::secret::NetworkSettings {
+                ports: Some({
+                    let mut ports = HashMap::new();
+                    ports.insert(
+                        "80/tcp".to_string(),
+                        Some(vec![bollard::secret::PortBinding {
+                            host_ip: Some("0.0.0.0".to_string()),
+                            host_port: Some("8080".to_string()),
+                        }]),
+                    );
+                    ports
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let data = ContainerData::from(container);
+        let lines: Vec<String> = get_content_as_lines(&data)
+            .iter()
+            .map(|l| l.to_string())
+            .collect();
+
+        assert!(lines.iter().any(|l| l.starts_with("Port Configs:")));
+        assert!(lines.iter().any(|l| l.starts_with("Volumes:")));
+        assert!(lines.iter().any(|l| l.starts_with("Env:")));
+        assert!(lines.iter().any(|l| l.starts_with("Labels:")));
+
+        let env_index = lines.iter().position(|l| l.starts_with("Env:")).unwrap();
+        assert!(lines[env_index + 1].contains("A=1"));
+        assert!(lines[env_index + 2].contains("B=2"));
+
+        let labels_index = lines.iter().position(|l| l.starts_with("Labels:")).unwrap();
+        assert!(lines[labels_index + 1].contains("a: first"));
+        assert!(lines[labels_index + 2].contains("z: last"));
+    }
 }
