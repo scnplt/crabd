@@ -1,7 +1,7 @@
 use color_eyre::eyre::{OptionExt, Result};
 use crossterm::event::KeyEventKind;
 use futures::{FutureExt, StreamExt};
-use ratatui::crossterm::event::{KeyEvent, Event::Key};
+use ratatui::crossterm::event::{Event::Key, KeyEvent};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -48,7 +48,9 @@ impl EventHandler {
     }
 
     pub async fn next(&mut self) -> Result<Event> {
-        self.receiver.recv().await
+        self.receiver
+            .recv()
+            .await
             .ok_or_eyre("Failed to receive event")
     }
 

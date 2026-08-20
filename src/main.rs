@@ -1,7 +1,7 @@
 mod app;
-mod ui;
 mod docker;
 mod event;
+mod ui;
 mod utils;
 
 use crate::app::App;

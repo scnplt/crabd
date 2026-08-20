@@ -74,15 +74,24 @@ impl DockerClient {
     }
 
     pub async fn list_volumes(&self) -> Result<VolumeListResponse> {
-        Ok(self.client.list_volumes(Some(ListVolumesOptions::<String>::default())).await?)
+        Ok(self
+            .client
+            .list_volumes(Some(ListVolumesOptions::<String>::default()))
+            .await?)
     }
 
     pub async fn remove_volume(&self, name: &str, force: bool) -> Result<()> {
-        Ok(self.client.remove_volume(name, Some(RemoveVolumeOptions { force })).await?)
+        Ok(self
+            .client
+            .remove_volume(name, Some(RemoveVolumeOptions { force }))
+            .await?)
     }
 
     pub async fn list_networks(&self) -> Result<Vec<Network>> {
-        Ok(self.client.list_networks(Some(ListNetworksOptions::<String>::default())).await?)
+        Ok(self
+            .client
+            .list_networks(Some(ListNetworksOptions::<String>::default()))
+            .await?)
     }
 
     pub async fn remove_network(&self, name: &str) -> Result<()> {
@@ -90,12 +99,18 @@ impl DockerClient {
     }
 
     pub async fn list_images(&self) -> Result<Vec<ImageSummary>> {
-        let options = Some(ListImagesOptions::<String> { all: true, ..Default::default() });
+        let options = Some(ListImagesOptions::<String> {
+            all: true,
+            ..Default::default()
+        });
         Ok(self.client.list_images(options).await?)
     }
 
     pub async fn remove_image(&self, id: &str, force: bool) -> Result<()> {
-        let options = Some(RemoveImageOptions { force, ..Default::default() });
+        let options = Some(RemoveImageOptions {
+            force,
+            ..Default::default()
+        });
         self.client.remove_image(id, options, None).await?;
         Ok(())
     }
