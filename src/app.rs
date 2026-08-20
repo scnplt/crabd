@@ -1,4 +1,4 @@
-use crate::docker::client::DockerClient;
+use crate::docker::client::{DockerApi, DockerClient};
 use crate::event::{AppEvent, Event, EventHandler};
 use crate::ui::container_info_block::{ContainerData, ContainerInfoBlock};
 use crate::ui::container_table::{ContainerTable, ContainerTableRow};
@@ -21,10 +21,10 @@ use ratatui::{
 use strum::IntoEnumIterator;
 use strum_macros::{Display, EnumIter, FromRepr};
 
-pub struct App {
+pub struct App<C: DockerApi> {
     running: bool,
     events: EventHandler,
-    docker_client: DockerClient,
+    docker_client: C,
     selected_tab: SelectedTab,
     container_table: ContainerTable,
     container_info: Option<Box<dyn ScrollableInfoBlock<Data = ContainerData>>>,
@@ -33,7 +33,7 @@ pub struct App {
     image_table: ImageTable,
 }
 
-impl App {
+impl App<DockerClient> {
     pub fn new() -> Result<Self> {
         Ok(Self {
             running: true,
@@ -46,6 +46,26 @@ impl App {
             network_table: NetworkTable::default(),
             image_table: ImageTable::default(),
         })
+    }
+}
+
+impl<C: DockerApi> App<C> {
+    /// Test-only constructor; builds an `App` from a caller-provided `DockerApi`
+    /// implementation, using the event handler's test constructor so no crossterm
+    /// reader task is spawned.
+    #[cfg(test)]
+    fn with_client(docker_client: C) -> Self {
+        Self {
+            running: true,
+            events: EventHandler::new_without_reader(),
+            docker_client,
+            selected_tab: SelectedTab::default(),
+            container_table: ContainerTable::default(),
+            container_info: None,
+            volume_table: VolumeTable::default(),
+            network_table: NetworkTable::default(),
+            image_table: ImageTable::default(),
+        }
     }
 
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
@@ -320,5 +340,383 @@ impl SelectedTab {
         let current_index = self as usize;
         let previous_index = current_index.saturating_sub(1);
         Self::from_repr(previous_index).unwrap_or(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bollard::secret::{
+        ContainerInspectResponse, ContainerSummary, ImageSummary, Network, Volume,
+        VolumeListResponse,
+    };
+    use color_eyre::eyre::eyre;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct MockDockerClient {
+        containers: Vec<ContainerSummary>,
+        volumes: Vec<Volume>,
+        networks: Vec<Network>,
+        images: Vec<ImageSummary>,
+        inspect: Option<ContainerInspectResponse>,
+        fail_with: Option<String>,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl MockDockerClient {
+        fn record(&self, call: impl Into<String>) {
+            self.calls.lock().unwrap().push(call.into());
+        }
+    }
+
+    impl DockerApi for MockDockerClient {
+        async fn list_containers(&self) -> Result<Vec<ContainerSummary>> {
+            self.record("list_containers");
+            Ok(self.containers.clone())
+        }
+
+        async fn stop_container(&self, container_id: &str) -> Result<()> {
+            self.record(format!("stop_container:{container_id}"));
+            match &self.fail_with {
+                Some(msg) => Err(eyre!(msg.clone())),
+                None => Ok(()),
+            }
+        }
+
+        async fn restart_container(&self, container_id: &str) -> Result<()> {
+            self.record(format!("restart_container:{container_id}"));
+            match &self.fail_with {
+                Some(msg) => Err(eyre!(msg.clone())),
+                None => Ok(()),
+            }
+        }
+
+        async fn kill_container(&self, container_id: &str) -> Result<()> {
+            self.record(format!("kill_container:{container_id}"));
+            match &self.fail_with {
+                Some(msg) => Err(eyre!(msg.clone())),
+                None => Ok(()),
+            }
+        }
+
+        async fn remove_container(&self, container_id: &str) -> Result<()> {
+            self.record(format!("remove_container:{container_id}"));
+            match &self.fail_with {
+                Some(msg) => Err(eyre!(msg.clone())),
+                None => Ok(()),
+            }
+        }
+
+        async fn inspect_container(&self, container_id: &str) -> Result<ContainerInspectResponse> {
+            self.record(format!("inspect_container:{container_id}"));
+            self.inspect
+                .clone()
+                .ok_or_else(|| eyre!("no inspect data configured"))
+        }
+
+        async fn list_volumes(&self) -> Result<VolumeListResponse> {
+            self.record("list_volumes");
+            Ok(VolumeListResponse {
+                volumes: Some(self.volumes.clone()),
+                ..Default::default()
+            })
+        }
+
+        async fn remove_volume(&self, name: &str, force: bool) -> Result<()> {
+            self.record(format!("remove_volume:{name}:{force}"));
+            match &self.fail_with {
+                Some(msg) => Err(eyre!(msg.clone())),
+                None => Ok(()),
+            }
+        }
+
+        async fn list_networks(&self) -> Result<Vec<Network>> {
+            self.record("list_networks");
+            Ok(self.networks.clone())
+        }
+
+        async fn remove_network(&self, name: &str) -> Result<()> {
+            self.record(format!("remove_network:{name}"));
+            match &self.fail_with {
+                Some(msg) => Err(eyre!(msg.clone())),
+                None => Ok(()),
+            }
+        }
+
+        async fn list_images(&self) -> Result<Vec<ImageSummary>> {
+            self.record("list_images");
+            Ok(self.images.clone())
+        }
+
+        async fn remove_image(&self, id: &str, force: bool) -> Result<()> {
+            self.record(format!("remove_image:{id}:{force}"));
+            match &self.fail_with {
+                Some(msg) => Err(eyre!(msg.clone())),
+                None => Ok(()),
+            }
+        }
+    }
+
+    fn container_summary(id: &str) -> ContainerSummary {
+        ContainerSummary {
+            id: Some(id.to_string()),
+            names: Some(vec![format!("/{id}")]),
+            state: Some("running".to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn volume(name: &str) -> Volume {
+        Volume {
+            name: name.to_string(),
+            driver: "local".to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn network(id: &str, name: &str) -> Network {
+        Network {
+            id: Some(id.to_string()),
+            name: Some(name.to_string()),
+            driver: Some("bridge".to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn image(id: &str) -> ImageSummary {
+        ImageSummary {
+            id: format!("sha256:{id}"),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn update_containers_populates_table() {
+        let mock = MockDockerClient {
+            containers: vec![container_summary("a"), container_summary("b")],
+            ..Default::default()
+        };
+        let mut app = App::with_client(mock);
+
+        app.update_containers().await.unwrap();
+
+        assert_eq!(app.container_table.table_info().items.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn update_volumes_populates_table() {
+        let mock = MockDockerClient {
+            volumes: vec![volume("a"), volume("b")],
+            ..Default::default()
+        };
+        let mut app = App::with_client(mock);
+
+        app.update_volumes().await.unwrap();
+
+        assert_eq!(app.volume_table.table_info().items.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn update_networks_populates_table() {
+        let mock = MockDockerClient {
+            networks: vec![network("111111111111", "a"), network("222222222222", "b")],
+            ..Default::default()
+        };
+        let mut app = App::with_client(mock);
+
+        app.update_networks().await.unwrap();
+
+        assert_eq!(app.network_table.table_info().items.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn update_images_populates_table() {
+        let mock = MockDockerClient {
+            images: vec![
+                image("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd"),
+                image("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abce"),
+            ],
+            ..Default::default()
+        };
+        let mut app = App::with_client(mock);
+
+        app.update_images().await.unwrap();
+
+        assert_eq!(app.image_table.table_info().items.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn restart_container_error_is_shown_in_footer() {
+        let mock = MockDockerClient {
+            fail_with: Some("a:b:daemon says no".to_string()),
+            ..Default::default()
+        };
+        let mut app = App::with_client(mock);
+
+        app.restart_container("container-id".to_string())
+            .await
+            .unwrap();
+
+        let err = app.container_table.table_info().err.clone().unwrap();
+        assert!(err.starts_with("[ERR] "));
+        assert!(err.contains("daemon says no"));
+    }
+
+    #[tokio::test]
+    async fn remove_volume_error_is_shown_in_footer() {
+        let mock = MockDockerClient {
+            fail_with: Some("volume is in use by container [abc123def456]".to_string()),
+            ..Default::default()
+        };
+        let mut app = App::with_client(mock);
+
+        app.remove_volume("volume-name".to_string(), false)
+            .await
+            .unwrap();
+
+        let err = app.volume_table.table_info().err.clone().unwrap();
+        assert!(err.starts_with("[ERR] "));
+        assert!(err.contains("Volume is in use by container: abc123def456"));
+    }
+
+    #[tokio::test]
+    async fn remove_network_error_is_shown_in_footer() {
+        let mock = MockDockerClient {
+            fail_with: Some("a:b:daemon says no".to_string()),
+            ..Default::default()
+        };
+        let mut app = App::with_client(mock);
+
+        app.remove_network("network-name".to_string())
+            .await
+            .unwrap();
+
+        let err = app.network_table.table_info().err.clone().unwrap();
+        assert!(err.starts_with("[ERR] "));
+        assert!(err.contains("daemon says no"));
+    }
+
+    #[tokio::test]
+    async fn go_to_container_info_opens_and_back_closes() {
+        let mock = MockDockerClient {
+            inspect: Some(ContainerInspectResponse {
+                id: Some("container-id".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut app = App::with_client(mock);
+
+        app.go_to_container_info("container-id".to_string())
+            .await
+            .unwrap();
+        assert!(app.container_info.is_some());
+
+        let event = app.handle_key_event(KeyEvent::from(KeyCode::Esc)).unwrap();
+        assert!(matches!(event, Some(AppEvent::Back)));
+    }
+
+    #[tokio::test]
+    async fn key_events_route_to_info_block_when_open() {
+        let mock = MockDockerClient {
+            inspect: Some(ContainerInspectResponse {
+                id: Some("container-id".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut app = App::with_client(mock);
+
+        app.go_to_container_info("container-id".to_string())
+            .await
+            .unwrap();
+
+        let tab_before = app.selected_tab as usize;
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('t')))
+            .unwrap();
+        assert_eq!(app.selected_tab as usize, tab_before);
+    }
+
+    #[test]
+    fn ctrl_c_quits() {
+        let mock = MockDockerClient::default();
+        let mut app = App::with_client(mock);
+
+        let event = app
+            .handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert!(matches!(event, Some(AppEvent::Quit)));
+
+        app.quit();
+        assert!(!app.running);
+    }
+
+    #[test]
+    fn arrow_and_hjkl_change_tabs() {
+        let mock = MockDockerClient::default();
+        let mut app = App::with_client(mock);
+
+        assert_eq!(app.selected_tab as usize, SelectedTab::Containers as usize);
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Right))
+            .unwrap();
+        assert_eq!(app.selected_tab as usize, SelectedTab::Volumes as usize);
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('l')))
+            .unwrap();
+        assert_eq!(app.selected_tab as usize, SelectedTab::Networks as usize);
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Left)).unwrap();
+        assert_eq!(app.selected_tab as usize, SelectedTab::Volumes as usize);
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('h')))
+            .unwrap();
+        assert_eq!(app.selected_tab as usize, SelectedTab::Containers as usize);
+
+        // Saturates at the low end.
+        app.handle_key_event(KeyEvent::from(KeyCode::Left)).unwrap();
+        assert_eq!(app.selected_tab as usize, SelectedTab::Containers as usize);
+
+        // Saturates at the high end.
+        for _ in 0..5 {
+            app.handle_key_event(KeyEvent::from(KeyCode::Right))
+                .unwrap();
+        }
+        assert_eq!(app.selected_tab as usize, SelectedTab::Images as usize);
+    }
+
+    #[test]
+    fn selected_tab_next_and_previous_saturate() {
+        assert_eq!(SelectedTab::Containers.previous() as usize, 0);
+        assert_eq!(
+            SelectedTab::Containers.next() as usize,
+            SelectedTab::Volumes as usize
+        );
+        assert_eq!(
+            SelectedTab::Volumes.next() as usize,
+            SelectedTab::Networks as usize
+        );
+        assert_eq!(
+            SelectedTab::Networks.next() as usize,
+            SelectedTab::Images as usize
+        );
+        assert_eq!(
+            SelectedTab::Images.next() as usize,
+            SelectedTab::Images as usize
+        );
+        assert_eq!(
+            SelectedTab::Volumes.previous() as usize,
+            SelectedTab::Containers as usize
+        );
+    }
+
+    #[test]
+    fn selected_tab_title_renders_padded_name() {
+        assert_eq!(
+            SelectedTab::Containers.title().to_string(),
+            "  Containers  "
+        );
     }
 }

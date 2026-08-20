@@ -128,4 +128,67 @@ mod tests {
 
         assert_eq!(names, vec!["alpha", "bravo", "charlie"]);
     }
+
+    #[test]
+    fn error_message_captures_daemon_in_use_segment() {
+        let table = NetworkTable::default();
+        let raw = "Error response from daemon: error while removing network: network foo id \
+            abc123def456 has active endpoints";
+        assert_eq!(
+            table.error_message(raw),
+            "network foo id abc123def456 has active endpoints"
+        );
+
+        assert_eq!(
+            table.error_message("no colons here"),
+            "Something went wrong..."
+        );
+    }
+
+    #[test]
+    fn from_source_strips_fractional_seconds_and_truncates_id() {
+        let mut net = network("abcdef012345extra", "my-net");
+        net.created = Some("2024-01-02T03:04:05.123456789Z".to_string());
+
+        let row = NetworkTableRow::from_source(&net);
+        assert_eq!(row.created_at, "2024-01-02T03:04:05Z");
+        assert_eq!(row.id, "abcdef012345...");
+    }
+
+    #[test]
+    fn handle_resource_key_event_dispatches_remove_network() {
+        let mut table = NetworkTable::default();
+        table.update_with_items(NetworkTableRow::from_list(vec![network(
+            "111111111111",
+            "my-net",
+        )]));
+        table.select_row(0);
+
+        match table
+            .handle_resource_key_event(KeyEvent::from(KeyCode::Delete))
+            .unwrap()
+        {
+            KeyOutcome::Handled(Some(AppEvent::RemoveNetwork(name))) => {
+                assert_eq!(name, "my-net")
+            }
+            _ => panic!("expected RemoveNetwork via Delete"),
+        }
+
+        match table
+            .handle_resource_key_event(KeyEvent::from(KeyCode::Char('d')))
+            .unwrap()
+        {
+            KeyOutcome::Handled(Some(AppEvent::RemoveNetwork(name))) => {
+                assert_eq!(name, "my-net")
+            }
+            _ => panic!("expected RemoveNetwork via 'd'"),
+        }
+
+        assert!(matches!(
+            table
+                .handle_resource_key_event(KeyEvent::from(KeyCode::Char('z')))
+                .unwrap(),
+            KeyOutcome::Fallthrough
+        ));
+    }
 }

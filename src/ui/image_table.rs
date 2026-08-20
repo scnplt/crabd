@@ -140,4 +140,89 @@ mod tests {
 
         assert_eq!(ids, vec!["b", "c", "a"]);
     }
+
+    #[test]
+    fn error_message_matches_realistic_daemon_strings() {
+        let table = ImageTable::default();
+
+        let stopped_msg = "Error response from daemon: conflict: unable to delete abc123def456 \
+            (must be forced) - image is being used by stopped container abc123";
+        assert_eq!(
+            table.error_message(stopped_msg),
+            "(must be forced) - image is being used by stopped container abc123"
+        );
+
+        let running_msg = "Error response from daemon: conflict: unable to delete xyz789 \
+            (cannot be forced) - image is being used by running container xyz";
+        assert_eq!(
+            table.error_message(running_msg),
+            "(cannot be forced) - image is being used by running container xyz"
+        );
+
+        assert_eq!(
+            table.error_message("some unrelated error"),
+            "Something went wrong..."
+        );
+    }
+
+    #[test]
+    fn height_reflects_tag_count() {
+        let no_tags = ImageTableRow {
+            id: "id".to_string(),
+            tags: String::new(),
+            size: "0".to_string(),
+            created: "now".to_string(),
+            created_epoch: 0,
+        };
+        assert_eq!(no_tags.height(), DEFAULT_ROW_HEIGHT);
+
+        let two_tags = ImageTableRow {
+            tags: "repo:tag1\nrepo:tag2".to_string(),
+            ..no_tags
+        };
+        assert_eq!(two_tags.height(), 4);
+    }
+
+    #[test]
+    fn handle_resource_key_event_dispatches_expected_events() {
+        let mut table = ImageTable::default();
+        let images = vec![image(
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd",
+            100,
+        )];
+        table.update_with_items(ImageTableRow::from_list(images));
+        table.select_row(0);
+        let id = table.selected_row().unwrap().id.clone();
+
+        match table
+            .handle_resource_key_event(KeyEvent::from(KeyCode::Char('d')))
+            .unwrap()
+        {
+            KeyOutcome::Handled(Some(AppEvent::RemoveImage(got, false))) => assert_eq!(got, id),
+            _ => panic!("expected RemoveImage(id, false)"),
+        }
+
+        match table
+            .handle_resource_key_event(KeyEvent::from(KeyCode::Delete))
+            .unwrap()
+        {
+            KeyOutcome::Handled(Some(AppEvent::RemoveImage(got, false))) => assert_eq!(got, id),
+            _ => panic!("expected RemoveImage(id, false)"),
+        }
+
+        match table
+            .handle_resource_key_event(KeyEvent::from(KeyCode::Char('f')))
+            .unwrap()
+        {
+            KeyOutcome::Handled(Some(AppEvent::RemoveImage(got, true))) => assert_eq!(got, id),
+            _ => panic!("expected RemoveImage(id, true)"),
+        }
+
+        assert!(matches!(
+            table
+                .handle_resource_key_event(KeyEvent::from(KeyCode::Char('z')))
+                .unwrap(),
+            KeyOutcome::Fallthrough
+        ));
+    }
 }

@@ -1,7 +1,7 @@
 use color_eyre::eyre::{OptionExt, Result};
 use crossterm::event::KeyEventKind;
 use futures::{FutureExt, StreamExt};
-use ratatui::crossterm::event::{KeyEvent, Event::Key};
+use ratatui::crossterm::event::{Event::Key, KeyEvent};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -48,12 +48,22 @@ impl EventHandler {
     }
 
     pub async fn next(&mut self) -> Result<Event> {
-        self.receiver.recv().await
+        self.receiver
+            .recv()
+            .await
             .ok_or_eyre("Failed to receive event")
     }
 
     pub fn send(&mut self, app_event: AppEvent) {
         let _ = self.sender.send(Event::App(app_event));
+    }
+
+    /// Test-only constructor; skips the crossterm reader task so `App` can be driven
+    /// deterministically without a terminal.
+    #[cfg(test)]
+    pub fn new_without_reader() -> Self {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        Self { sender, receiver }
     }
 }
 
@@ -92,5 +102,20 @@ impl EventTask {
 
     fn send(&self, event: Event) {
         let _ = self.sender.send(event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn send_then_next_returns_the_app_event() {
+        let mut handler = EventHandler::new_without_reader();
+
+        handler.send(AppEvent::Quit);
+
+        let event = handler.next().await.unwrap();
+        assert!(matches!(event, Event::App(AppEvent::Quit)));
     }
 }

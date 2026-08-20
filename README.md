@@ -50,7 +50,6 @@ cargo run --release
 - Add customization options (themes, keybindings, etc.)
 - Improve error handling and user feedback
 - Add more advanced filtering and search features
-- Add tests and CI/CD pipeline
 
 ## Contributing
 

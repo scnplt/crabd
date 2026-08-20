@@ -122,4 +122,54 @@ mod tests {
 
         assert_eq!(names, vec!["alpha", "bravo", "charlie"]);
     }
+
+    #[test]
+    fn error_message_truncates_long_container_id_to_fifteen_chars() {
+        let table = VolumeTable::default();
+        let msg = table.error_message("volume is in use by container [abcdef0123456789abc]");
+        assert_eq!(msg, "Volume is in use by container: abcdef012345678...");
+    }
+
+    #[test]
+    fn error_message_leaves_short_container_id_untruncated() {
+        let table = VolumeTable::default();
+        let msg = table.error_message("volume is in use by container [abc123]");
+        assert_eq!(msg, "Volume is in use by container: abc123...");
+    }
+
+    #[test]
+    fn error_message_falls_back_when_no_bracketed_id() {
+        let table = VolumeTable::default();
+        assert_eq!(
+            table.error_message("some unrelated error"),
+            "Something went wrong..."
+        );
+    }
+
+    #[test]
+    fn handle_resource_key_event_dispatches_expected_events() {
+        let mut table = VolumeTable::default();
+        table.update_with_items(VolumeTableRow::from_list(vec![volume("my-volume")]));
+        table.select_row(0);
+
+        match table
+            .handle_resource_key_event(KeyEvent::from(KeyCode::Char('d')))
+            .unwrap()
+        {
+            KeyOutcome::Handled(Some(AppEvent::RemoveVolume(name, false))) => {
+                assert_eq!(name, "my-volume")
+            }
+            _ => panic!("expected RemoveVolume(name, false)"),
+        }
+
+        match table
+            .handle_resource_key_event(KeyEvent::from(KeyCode::Char('f')))
+            .unwrap()
+        {
+            KeyOutcome::Handled(Some(AppEvent::RemoveVolume(name, true))) => {
+                assert_eq!(name, "my-volume")
+            }
+            _ => panic!("expected RemoveVolume(name, true)"),
+        }
+    }
 }

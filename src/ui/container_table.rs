@@ -201,6 +201,7 @@ fn get_footer_text(show_all: bool, is_running: Option<bool>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bollard::secret::PortTypeEnum;
 
     fn summary_with_state(state: &str) -> ContainerSummary {
         ContainerSummary {
@@ -261,5 +262,168 @@ mod tests {
         assert_eq!(cells[2], "-"); // image
         assert_eq!(cells[3], "-"); // state (EMPTY)
         assert_eq!(cells[4], "-"); // ports
+    }
+
+    #[test]
+    fn get_footer_text_variants() {
+        let text = get_footer_text(true, None);
+        assert_eq!(text, " <Ent> details | <T> All");
+
+        let text = get_footer_text(true, Some(true));
+        assert!(text.contains("restart | <S> stop | <X> kill"));
+        assert!(text.contains("<T> All"));
+
+        let text = get_footer_text(false, Some(false));
+        assert!(text.contains("<R> start"));
+        assert!(text.contains("<T> Running"));
+    }
+
+    #[test]
+    fn error_message_extracts_third_colon_segment() {
+        let table = ContainerTable::default();
+        assert_eq!(table.error_message("a:b:message"), "message");
+        assert_eq!(table.error_message("a:b"), "Something went wrong...");
+    }
+
+    fn summary_with_ports(id: &str, state: &str) -> ContainerSummary {
+        ContainerSummary {
+            id: Some(id.to_string()),
+            names: Some(vec![format!("/{id}")]),
+            image: Some("image".to_string()),
+            state: Some(state.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn handle_resource_key_event_dispatches_expected_events() {
+        let mut table = ContainerTable::default();
+        let rows = ContainerTableRow::from_list(vec![
+            summary_with_ports("running-id", "running"),
+            summary_with_ports("exited-id", "exited"),
+        ]);
+        table.update_with_items(rows);
+        table.select_row(0);
+
+        let id = table.selected_row().unwrap().id.clone();
+
+        match table
+            .handle_resource_key_event(KeyEvent::from(KeyCode::Char('r')))
+            .unwrap()
+        {
+            KeyOutcome::Handled(Some(AppEvent::RestartContainer(got))) => assert_eq!(got, id),
+            _ => panic!("expected RestartContainer"),
+        }
+
+        match table
+            .handle_resource_key_event(KeyEvent::from(KeyCode::Char('s')))
+            .unwrap()
+        {
+            KeyOutcome::Handled(Some(AppEvent::StopContainer(got))) => assert_eq!(got, id),
+            _ => panic!("expected StopContainer"),
+        }
+
+        match table
+            .handle_resource_key_event(KeyEvent::from(KeyCode::Char('x')))
+            .unwrap()
+        {
+            KeyOutcome::Handled(Some(AppEvent::KillContainer(got))) => assert_eq!(got, id),
+            _ => panic!("expected KillContainer"),
+        }
+
+        match table
+            .handle_resource_key_event(KeyEvent::from(KeyCode::Enter))
+            .unwrap()
+        {
+            KeyOutcome::Handled(Some(AppEvent::GoToContainerDetails(got))) => assert_eq!(got, id),
+            _ => panic!("expected GoToContainerDetails"),
+        }
+
+        match table
+            .handle_resource_key_event(KeyEvent::from(KeyCode::Delete))
+            .unwrap()
+        {
+            KeyOutcome::Handled(Some(AppEvent::RemoveContainer(got))) => assert_eq!(got, id),
+            _ => panic!("expected RemoveContainer"),
+        }
+    }
+
+    #[test]
+    fn toggle_show_all_shrinks_visible_rows_and_clamps_selection() {
+        let mut table = ContainerTable::default();
+        let rows = ContainerTableRow::from_list(vec![
+            summary_with_ports("running-id", "running"),
+            summary_with_ports("exited-id", "exited"),
+        ]);
+        table.update_with_items(rows);
+        table.info.row_heights = vec![DEFAULT_ROW_HEIGHT];
+
+        assert_eq!(table.visible_indices().len(), 2);
+
+        // Select the last index before toggling, then verify it gets clamped.
+        table.select_row(1);
+
+        table
+            .handle_resource_key_event(KeyEvent::from(KeyCode::Char('t')))
+            .unwrap();
+
+        assert_eq!(table.visible_indices().len(), 1);
+        let selected = table.table_info().state.selected().unwrap();
+        assert!(selected < table.visible_indices().len());
+    }
+
+    #[test]
+    fn height_reflects_port_count() {
+        let no_ports = ContainerTableRow {
+            id: "id".to_string(),
+            name: "name".to_string(),
+            image: "image".to_string(),
+            state: ContainerStateStatusEnum::RUNNING,
+            ports: vec![],
+        };
+        assert_eq!(no_ports.height(), DEFAULT_ROW_HEIGHT);
+
+        let two_ports = ContainerTableRow {
+            ports: vec![
+                PortMapping {
+                    private: 80,
+                    public: 8080,
+                    protocol: PortTypeEnum::TCP,
+                },
+                PortMapping {
+                    private: 443,
+                    public: 8443,
+                    protocol: PortTypeEnum::TCP,
+                },
+            ],
+            ..no_ports
+        };
+        assert_eq!(two_ports.height(), 4);
+    }
+
+    #[test]
+    fn cells_joins_multiple_ports_with_newline() {
+        let row = ContainerTableRow {
+            id: "id".to_string(),
+            name: "name".to_string(),
+            image: "image".to_string(),
+            state: ContainerStateStatusEnum::RUNNING,
+            ports: vec![
+                PortMapping {
+                    private: 80,
+                    public: 8080,
+                    protocol: PortTypeEnum::TCP,
+                },
+                PortMapping {
+                    private: 443,
+                    public: 8443,
+                    protocol: PortTypeEnum::TCP,
+                },
+            ],
+        };
+
+        let cells = row.cells();
+        assert!(cells[4].contains('\n'));
+        assert_eq!(cells[4].matches('\n').count(), 1);
     }
 }
