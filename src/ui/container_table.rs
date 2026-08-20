@@ -5,7 +5,6 @@ use crate::{event::AppEvent, ui::resource_table::ResourceTable, utils::is_contai
 use super::common::{TableStyle, render_footer};
 use bollard::secret::{ContainerStateStatusEnum, ContainerSummary};
 use color_eyre::Result;
-use ratatui::style::Stylize;
 use ratatui::{
     Frame,
     crossterm::event::{KeyCode, KeyEvent},

@@ -6,7 +6,6 @@ use crate::ui::resource_table::ResourceTableInfo;
 use bollard::secret::Network;
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::style::Stylize;
 use ratatui::{
     Frame,
     layout::{Constraint, Rect},
