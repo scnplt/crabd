@@ -127,7 +127,10 @@ impl VolumeTable {
         let err_msg = Regex::new(REGEX_VOLUME_IN_USE).ok()
             .and_then(|re| re.captures(&err))
             .and_then(|caps| caps.get(1))
-            .map(|m| format!("Volume is in use by container: {}...", &m.as_str()[..15]))
+            .map(|m| {
+                let id = m.as_str();
+                format!("Volume is in use by container: {}...", id.get(..15).unwrap_or(id))
+            })
             .unwrap_or_else(|| "Something went wrong...".to_string());
 
         self.err = Some(format!("[ERR] {}", err_msg))
