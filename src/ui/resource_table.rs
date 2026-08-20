@@ -48,14 +48,14 @@ pub trait ResourceTable {
 
     fn next_row(&mut self) {
         let table_info = self.get_table_info();
-        let last_index = table_info.items.len() - 1;
+        let Some(last_index) = table_info.items.len().checked_sub(1) else { return };
         let next_index = table_info.state.selected().map_or(0, |i| if i >= last_index { 0 } else { i + 1 });
         self.select_row(next_index);
     }
 
     fn previous_row(&mut self) {
         let table_info = self.get_table_info();
-        let last_index = table_info.items.len() - 1;
+        let Some(last_index) = table_info.items.len().checked_sub(1) else { return };
         let previous_index = table_info.state.selected().map_or(0, |i| if i == 0 { last_index } else { i - 1 });
         self.select_row(previous_index);
     }
