@@ -1,11 +1,10 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
+use crate::docker::models::{Mount, PortConfig};
 use crate::{event::AppEvent, utils::is_container_running};
 
 use super::common::{render_footer, render_scrollbar};
-use bollard::secret::{
-    ContainerInspectResponse, ContainerStateStatusEnum, MountPoint, MountPointTypeEnum, PortBinding,
-};
+use bollard::secret::{ContainerInspectResponse, ContainerStateStatusEnum};
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
@@ -25,22 +24,43 @@ pub struct ContainerInfoBlock {
     skipped_tick_count_for_refresh: u8,
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct ContainerData {
     id: String,
     name: String,
     image: String,
     created: String,
-    state: String,
+    state: ContainerStateStatusEnum,
     ip_address: String,
     start_time: String,
-    port_configs: String,
-    cmd: String,
-    entrypoint: String,
-    env: String,
+    port_configs: Vec<PortConfig>,
+    cmd: Vec<String>,
+    entrypoint: Vec<String>,
+    env: Vec<String>,
     restart_policy: String,
-    volumes: String,
-    labels: String,
+    volumes: Vec<Mount>,
+    labels: BTreeMap<String, String>,
+}
+
+impl Default for ContainerData {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            image: String::new(),
+            created: String::new(),
+            state: ContainerStateStatusEnum::EMPTY,
+            ip_address: String::new(),
+            start_time: String::new(),
+            port_configs: Vec::new(),
+            cmd: Vec::new(),
+            entrypoint: Vec::new(),
+            env: Vec::new(),
+            restart_policy: String::new(),
+            volumes: Vec::new(),
+            labels: BTreeMap::new(),
+        }
+    }
 }
 
 impl ScrollableInfoBlock for ContainerInfoBlock {
@@ -75,12 +95,17 @@ impl ScrollableInfoBlock for ContainerInfoBlock {
             if line_len > max { line_len } else { max }
         });
 
-        self.scroll_info.max_horizontal = max_horizontal.saturating_sub(info_area.width as usize - 2);
-        self.scroll_info.max_vertical = content_lines.len().saturating_sub(info_area.height as usize - 2);
+        self.scroll_info.max_horizontal =
+            max_horizontal.saturating_sub(info_area.width as usize - 2);
+        self.scroll_info.max_vertical = content_lines
+            .len()
+            .saturating_sub(info_area.height as usize - 2);
 
         self.render_content(frame, info_area, content_lines);
 
-        self.scroll_info.vertical_state = self.scroll_info.vertical_state
+        self.scroll_info.vertical_state = self
+            .scroll_info
+            .vertical_state
             .content_length(self.scroll_info.max_vertical)
             .position(self.scroll_info.vertical);
 
@@ -91,7 +116,9 @@ impl ScrollableInfoBlock for ContainerInfoBlock {
             true,
         );
 
-        self.scroll_info.horizontal_state = self.scroll_info.horizontal_state
+        self.scroll_info.horizontal_state = self
+            .scroll_info
+            .horizontal_state
             .content_length(self.scroll_info.max_horizontal)
             .position(self.scroll_info.horizontal);
 
@@ -105,7 +132,7 @@ impl ScrollableInfoBlock for ContainerInfoBlock {
         render_footer(
             frame,
             footer_area,
-            get_footer_text(is_container_running(&self.data.state)),
+            get_footer_text(is_container_running(self.data.state)),
             None,
         );
 
@@ -165,10 +192,24 @@ fn get_content_as_lines(data: &ContainerData) -> Vec<Line<'static>> {
         ("Created: ".to_string(), data.created.clone()),
         ("Start Time: ".to_string(), data.start_time.clone()),
         ("Restart Policy: ".to_string(), data.restart_policy.clone()),
-        ("State: ".to_string(), data.state.clone()),
+        ("State: ".to_string(), data.state.to_string()),
         spacer.clone(),
-        ("CMD: ".to_string(), data.cmd.clone()),
-        ("Entrypoint: ".to_string(), data.entrypoint.clone()),
+        (
+            "CMD: ".to_string(),
+            if data.cmd.is_empty() {
+                "-".to_string()
+            } else {
+                data.cmd.join("\n")
+            },
+        ),
+        (
+            "Entrypoint: ".to_string(),
+            if data.entrypoint.is_empty() {
+                "-".to_string()
+            } else {
+                data.entrypoint.join("\n")
+            },
+        ),
     ];
 
     if !data.ip_address.is_empty() {
@@ -178,7 +219,8 @@ fn get_content_as_lines(data: &ContainerData) -> Vec<Line<'static>> {
         ]);
     }
 
-    if let Some(ports) = get_filtered_list(&data.port_configs) {
+    let port_configs = data.port_configs.iter().map(ToString::to_string).collect();
+    if let Some(ports) = format_list(port_configs) {
         lines.extend(vec![
             spacer.clone(),
             ("Port Configs:".to_string(), "".to_string()),
@@ -186,7 +228,8 @@ fn get_content_as_lines(data: &ContainerData) -> Vec<Line<'static>> {
         lines.extend(ports);
     }
 
-    if let Some(volumes) = get_filtered_list(&data.volumes) {
+    let volumes = data.volumes.iter().map(ToString::to_string).collect();
+    if let Some(volumes) = format_list(volumes) {
         lines.extend(vec![
             spacer.clone(),
             ("Volumes:".to_string(), "".to_string()),
@@ -194,12 +237,17 @@ fn get_content_as_lines(data: &ContainerData) -> Vec<Line<'static>> {
         lines.extend(volumes);
     }
 
-    if let Some(env) = get_filtered_list(&data.env) {
+    if let Some(env) = format_list(data.env.clone()) {
         lines.extend(vec![spacer.clone(), ("Env:".to_string(), "".to_string())]);
         lines.extend(env);
     }
 
-    if let Some(labels) = get_filtered_list(&data.labels) {
+    let labels = data
+        .labels
+        .iter()
+        .map(|(k, v)| format!("{k}: {v}"))
+        .collect();
+    if let Some(labels) = format_list(labels) {
         lines.extend(vec![
             spacer.clone(),
             ("Labels:".to_string(), "".to_string()),
@@ -216,18 +264,20 @@ fn get_content_as_lines(data: &ContainerData) -> Vec<Line<'static>> {
         .collect()
 }
 
-fn get_filtered_list(data: &str) -> Option<Vec<(String, String)>> {
-    let mut splitted_data: Vec<String> = data.split("\n")
-        .filter(|p| !p.is_empty())
-        .map(|s| s.to_string())
-        .collect();
+fn format_list(mut entries: Vec<String>) -> Option<Vec<(String, String)>> {
+    entries.retain(|e| !e.is_empty());
 
-    if splitted_data.is_empty() {
+    if entries.is_empty() {
         return None;
     }
 
-    splitted_data.sort_unstable();
-    Some(splitted_data.iter().map(|d| ("".to_string(), format!(" - {d}"))).collect())
+    entries.sort_unstable();
+    Some(
+        entries
+            .iter()
+            .map(|d| ("".to_string(), format!(" - {d}")))
+            .collect(),
+    )
 }
 
 fn get_footer_text(is_running: bool) -> String {
@@ -241,52 +291,56 @@ fn get_footer_text(is_running: bool) -> String {
 
 impl ContainerData {
     pub fn from(container: ContainerInspectResponse) -> Self {
-        let name = container.name.as_deref()
+        let name = container
+            .name
+            .as_deref()
             .and_then(|name| name.strip_prefix("/"))
             .map(String::from)
             .unwrap_or_else(|| "NaN".to_string());
 
-        let restart_policy = container.host_config.as_ref()
+        let restart_policy = container
+            .host_config
+            .as_ref()
             .and_then(|c| c.restart_policy.as_ref())
             .and_then(|c| c.name)
             .map(|name| format!("{name:?}").to_lowercase().replace("_", "-"))
             .unwrap_or_else(|| "-".to_string());
 
         let mut image = "-".to_string();
-        let mut cmd = "-".to_string();
-        let mut env = "-".to_string();
-        let mut entrypoint = "-".to_string();
-        let mut labels = "-".to_string();
+        let mut cmd = Vec::new();
+        let mut env = Vec::new();
+        let mut entrypoint = Vec::new();
+        let mut labels = BTreeMap::new();
         if let Some(config) = container.config {
             image = config.image.unwrap_or(image);
-            cmd = config.cmd.map(|c| c.join("\n")).unwrap_or(cmd);
-            env = config.env.map(|e| e.join("\n")).unwrap_or(env);
-            entrypoint = config.entrypoint.map(|ep| ep.join("\n")).unwrap_or(entrypoint);
-            labels = config.labels.map(|l| {
-                l.iter()
-                    .map(|(v, d)| format!("{v}: {d}"))
-                    .collect::<Vec<String>>()
-                    .join("\n")
-            }).unwrap_or(labels)
+            cmd = config.cmd.unwrap_or_default();
+            env = config.env.unwrap_or_default();
+            entrypoint = config.entrypoint.unwrap_or_default();
+            labels = config.labels.unwrap_or_default().into_iter().collect();
         }
 
         let mut ip_address = "-".to_string();
-        let mut port_configs = "-".to_string();
+        let mut port_configs = Vec::new();
         if let Some(network_settings) = container.network_settings {
             ip_address = network_settings.ip_address.unwrap_or(ip_address);
-            port_configs = network_settings.ports
-                .map(|p| get_ports_text(&p))
-                .unwrap_or(port_configs);
+            port_configs = network_settings
+                .ports
+                .map(|p| PortConfig::from_port_map(&p))
+                .unwrap_or_default();
         }
 
-        let mut state = ContainerStateStatusEnum::EMPTY.to_string();
+        let mut state = ContainerStateStatusEnum::EMPTY;
         let mut start_time = "-".to_string();
         if let Some(state_info) = container.state {
-            state = state_info.status.map(|s| s.to_string()).unwrap_or(state);
+            state = state_info.status.unwrap_or(state);
             start_time = state_info.started_at.unwrap_or(start_time);
         }
 
-        let volumes = container.mounts.as_ref().map_or("-".to_string(), |mp| get_mounts_text(mp));
+        let volumes = container
+            .mounts
+            .as_deref()
+            .map(Mount::from_mount_points)
+            .unwrap_or_default();
 
         Self {
             id: container.id.as_deref().unwrap_or("-").to_string(),
@@ -307,58 +361,76 @@ impl ContainerData {
     }
 }
 
-fn get_ports_text(ports: &HashMap<String, Option<Vec<PortBinding>>>) -> String {
-    ports
-        .iter()
-        .map(|(port, bindings)| {
-            let (ipv4_binding, ipv6_binding) = bindings
-                .as_ref()
-                .map(|b| {
-                    let ipv4 = b.iter().find(|pb| pb.host_ip == Some("0.0.0.0".to_string()));
-                    let ipv6 = b.iter().find(|pb| pb.host_ip == Some("::".to_string()));
-                    (ipv4, ipv6)
-                })
-                .unwrap_or((None, None));
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bollard::secret::{ContainerConfig, ContainerState};
+    use std::collections::HashMap;
 
-            let port_number = port.split('/').next().unwrap_or("");
-            let protocol = port.split('/').nth(1).unwrap_or("");
+    #[test]
+    fn from_extracts_typed_state_and_preserves_order() {
+        let mut labels = HashMap::new();
+        labels.insert("com.example.owner".to_string(), "team-a".to_string());
 
-            let ipv4_str = ipv4_binding.map(get_port_binding_text).unwrap_or_default();
-            let ipv6_str = ipv6_binding.map(get_port_binding_text).unwrap_or_default();
+        let container = ContainerInspectResponse {
+            id: Some("abc123".to_string()),
+            name: Some("/my-container".to_string()),
+            config: Some(ContainerConfig {
+                image: Some("alpine".to_string()),
+                cmd: Some(vec![
+                    "sh".to_string(),
+                    "-c".to_string(),
+                    "sleep 1".to_string(),
+                ]),
+                env: Some(vec!["A=1".to_string(), "B=2".to_string()]),
+                labels: Some(labels),
+                ..Default::default()
+            }),
+            state: Some(ContainerState {
+                status: Some(ContainerStateStatusEnum::RUNNING),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
 
-            match (ipv4_str.is_empty(), ipv6_str.is_empty()) {
-                (false, false) => format!("{ipv4_str} | {ipv6_str} -> {port_number}/{protocol}"),
-                (false, true) => format!("{ipv4_str} -> {port_number}/{protocol}"),
-                (true, false) => format!("{ipv6_str} -> {port_number}/{protocol}"),
-                _ => "".to_string(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
+        let data = ContainerData::from(container);
 
-fn get_port_binding_text(port_binding: &PortBinding) -> String {
-    format!(
-        "{}:{}",
-        port_binding.host_ip.as_deref().unwrap_or(""),
-        port_binding.host_port.as_deref().unwrap_or("")
-    )
-}
+        assert_eq!(data.state, ContainerStateStatusEnum::RUNNING);
+        assert_eq!(data.cmd, vec!["sh", "-c", "sleep 1"]);
+        assert_eq!(data.env, vec!["A=1", "B=2"]);
+        assert_eq!(
+            data.labels.get("com.example.owner"),
+            Some(&"team-a".to_string())
+        );
+    }
 
-fn get_mounts_text(mount_points: &[MountPoint]) -> String {
-    let mut mp = mount_points.iter()
-        .map(|mp| {
-            let source = match mp.typ {
-                Some(MountPointTypeEnum::VOLUME) => mp.name.clone().unwrap_or("-".to_string()),
-                Some(_) => mp.source.clone().unwrap_or("-".to_string()),
-                None => "-".to_string(),
-            };
+    #[test]
+    fn from_empty_inspect_yields_empty_collections() {
+        let data = ContainerData::from(ContainerInspectResponse::default());
 
-            let destination = mp.destination.clone().unwrap_or("-".to_string());
-            format!("{source} -> {destination}")
-        })
-        .collect::<Vec<String>>();
+        assert_eq!(data.state, ContainerStateStatusEnum::EMPTY);
+        assert!(data.cmd.is_empty());
+        assert!(data.entrypoint.is_empty());
+        assert!(data.env.is_empty());
+        assert!(data.labels.is_empty());
+        assert!(data.port_configs.is_empty());
+        assert!(data.volumes.is_empty());
+    }
 
-    mp.sort_by_key(|v| v.clone());
-    mp.join("\n")
+    #[test]
+    fn get_content_as_lines_drops_empty_optional_sections() {
+        let data = ContainerData::default();
+        let lines: Vec<String> = get_content_as_lines(&data)
+            .iter()
+            .map(|l| l.to_string())
+            .collect();
+
+        // CMD/Entrypoint are "-" when empty and must be filtered out entirely.
+        assert!(!lines.iter().any(|l| l.starts_with("CMD: ")));
+        assert!(!lines.iter().any(|l| l.starts_with("Entrypoint: ")));
+
+        // No optional sections should render when their data is empty.
+        assert!(!lines.iter().any(|l| l.starts_with("Env:")));
+        assert!(!lines.iter().any(|l| l.starts_with("Labels:")));
+    }
 }
