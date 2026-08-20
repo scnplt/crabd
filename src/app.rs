@@ -1,4 +1,4 @@
-use crate::docker::client::DockerClient;
+use crate::docker::client::{DockerApi, DockerClient};
 use crate::event::{AppEvent, Event, EventHandler};
 use crate::ui::container_info_block::{ContainerData, ContainerInfoBlock};
 use crate::ui::container_table::{ContainerTable, ContainerTableRow};
@@ -21,10 +21,10 @@ use ratatui::{
 use strum::IntoEnumIterator;
 use strum_macros::{Display, EnumIter, FromRepr};
 
-pub struct App {
+pub struct App<C: DockerApi> {
     running: bool,
     events: EventHandler,
-    docker_client: DockerClient,
+    docker_client: C,
     selected_tab: SelectedTab,
     container_table: ContainerTable,
     container_info: Option<Box<dyn ScrollableInfoBlock<Data = ContainerData>>>,
@@ -33,7 +33,7 @@ pub struct App {
     image_table: ImageTable,
 }
 
-impl App {
+impl App<DockerClient> {
     pub fn new() -> Result<Self> {
         Ok(Self {
             running: true,
@@ -46,6 +46,26 @@ impl App {
             network_table: NetworkTable::default(),
             image_table: ImageTable::default(),
         })
+    }
+}
+
+impl<C: DockerApi> App<C> {
+    /// Test-only constructor; builds an `App` from a caller-provided `DockerApi`
+    /// implementation, using the event handler's test constructor so no crossterm
+    /// reader task is spawned.
+    #[cfg(test)]
+    fn with_client(docker_client: C) -> Self {
+        Self {
+            running: true,
+            events: EventHandler::new_without_reader(),
+            docker_client,
+            selected_tab: SelectedTab::default(),
+            container_table: ContainerTable::default(),
+            container_info: None,
+            volume_table: VolumeTable::default(),
+            network_table: NetworkTable::default(),
+            image_table: ImageTable::default(),
+        }
     }
 
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {

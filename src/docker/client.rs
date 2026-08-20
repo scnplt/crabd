@@ -21,8 +21,28 @@ impl DockerClient {
             client: Docker::connect_with_local_defaults()?,
         })
     }
+}
 
-    pub async fn list_containers(&self) -> Result<Vec<ContainerSummary>> {
+/// Crate-internal trait, App is awaited directly by #[tokio::main] and never
+/// tokio::spawn-ed, so no Send bound is required.
+#[allow(async_fn_in_trait)]
+pub trait DockerApi {
+    async fn list_containers(&self) -> Result<Vec<ContainerSummary>>;
+    async fn stop_container(&self, container_id: &str) -> Result<()>;
+    async fn restart_container(&self, container_id: &str) -> Result<()>;
+    async fn kill_container(&self, container_id: &str) -> Result<()>;
+    async fn remove_container(&self, container_id: &str) -> Result<()>;
+    async fn inspect_container(&self, container_id: &str) -> Result<ContainerInspectResponse>;
+    async fn list_volumes(&self) -> Result<VolumeListResponse>;
+    async fn remove_volume(&self, name: &str, force: bool) -> Result<()>;
+    async fn list_networks(&self) -> Result<Vec<Network>>;
+    async fn remove_network(&self, name: &str) -> Result<()>;
+    async fn list_images(&self) -> Result<Vec<ImageSummary>>;
+    async fn remove_image(&self, id: &str, force: bool) -> Result<()>;
+}
+
+impl DockerApi for DockerClient {
+    async fn list_containers(&self) -> Result<Vec<ContainerSummary>> {
         Ok(self
             .client
             .list_containers(Some(ListContainersOptions::<String> {
@@ -32,28 +52,28 @@ impl DockerClient {
             .await?)
     }
 
-    pub async fn stop_container(&self, container_id: &str) -> Result<()> {
+    async fn stop_container(&self, container_id: &str) -> Result<()> {
         self.client
             .stop_container(container_id, None::<StopContainerOptions>)
             .await?;
         Ok(())
     }
 
-    pub async fn restart_container(&self, container_id: &str) -> Result<()> {
+    async fn restart_container(&self, container_id: &str) -> Result<()> {
         self.client
             .restart_container(container_id, None::<RestartContainerOptions>)
             .await?;
         Ok(())
     }
 
-    pub async fn kill_container(&self, container_id: &str) -> Result<()> {
+    async fn kill_container(&self, container_id: &str) -> Result<()> {
         self.client
             .kill_container(container_id, None::<KillContainerOptions<String>>)
             .await?;
         Ok(())
     }
 
-    pub async fn remove_container(&self, container_id: &str) -> Result<()> {
+    async fn remove_container(&self, container_id: &str) -> Result<()> {
         self.client
             .remove_container(
                 container_id,
@@ -66,39 +86,39 @@ impl DockerClient {
         Ok(())
     }
 
-    pub async fn inspect_container(&self, container_id: &str) -> Result<ContainerInspectResponse> {
+    async fn inspect_container(&self, container_id: &str) -> Result<ContainerInspectResponse> {
         Ok(self
             .client
             .inspect_container(container_id, None::<InspectContainerOptions>)
             .await?)
     }
 
-    pub async fn list_volumes(&self) -> Result<VolumeListResponse> {
+    async fn list_volumes(&self) -> Result<VolumeListResponse> {
         Ok(self
             .client
             .list_volumes(Some(ListVolumesOptions::<String>::default()))
             .await?)
     }
 
-    pub async fn remove_volume(&self, name: &str, force: bool) -> Result<()> {
+    async fn remove_volume(&self, name: &str, force: bool) -> Result<()> {
         Ok(self
             .client
             .remove_volume(name, Some(RemoveVolumeOptions { force }))
             .await?)
     }
 
-    pub async fn list_networks(&self) -> Result<Vec<Network>> {
+    async fn list_networks(&self) -> Result<Vec<Network>> {
         Ok(self
             .client
             .list_networks(Some(ListNetworksOptions::<String>::default()))
             .await?)
     }
 
-    pub async fn remove_network(&self, name: &str) -> Result<()> {
+    async fn remove_network(&self, name: &str) -> Result<()> {
         Ok(self.client.remove_network(name).await?)
     }
 
-    pub async fn list_images(&self) -> Result<Vec<ImageSummary>> {
+    async fn list_images(&self) -> Result<Vec<ImageSummary>> {
         let options = Some(ListImagesOptions::<String> {
             all: true,
             ..Default::default()
@@ -106,7 +126,7 @@ impl DockerClient {
         Ok(self.client.list_images(options).await?)
     }
 
-    pub async fn remove_image(&self, id: &str, force: bool) -> Result<()> {
+    async fn remove_image(&self, id: &str, force: bool) -> Result<()> {
         let options = Some(RemoveImageOptions {
             force,
             ..Default::default()
