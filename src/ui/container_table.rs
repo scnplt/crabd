@@ -1,8 +1,9 @@
+use crate::docker::models::{PortMapping, parse_container_state, state_label};
 use crate::ui::resource_table::ResourceTableInfo;
 use crate::{event::AppEvent, ui::resource_table::ResourceTable, utils::is_container_running};
 
 use super::common::{TableStyle, render_footer};
-use bollard::secret::{ContainerSummary, Port, PortTypeEnum};
+use bollard::secret::{ContainerStateStatusEnum, ContainerSummary};
 use color_eyre::Result;
 use ratatui::style::Stylize;
 use ratatui::{
@@ -26,8 +27,8 @@ pub struct ContainerTableRow {
     id: String,
     name: String,
     image: String,
-    state: String,
-    ports: String,
+    state: ContainerStateStatusEnum,
+    ports: Vec<PortMapping>,
 }
 
 impl Default for ContainerTable {
@@ -96,7 +97,7 @@ impl ResourceTable for ContainerTable {
             .info
             .items
             .iter()
-            .filter(|container| show_all || String::eq(&container.state, "running"))
+            .filter(|container| show_all || is_container_running(container.state))
             .collect();
         let visible_count = visible_items.len();
 
@@ -109,14 +110,9 @@ impl ResourceTable for ContainerTable {
                 } else {
                     self.style.alt_row_style
                 };
-                let item = container.ref_array();
-                let ports: Vec<&str> = container
-                    .ports
-                    .split("\n")
-                    .filter(|s| !s.is_empty())
-                    .collect();
-
-                let height = if ports.is_empty() { 3 } else { ports.len() + 2 };
+                let item = container.cells();
+                let port_count = container.ports.len();
+                let height = if port_count == 0 { 3 } else { port_count + 2 };
                 if index < visible_count - 1 {
                     self.info.row_heights.push(height);
                 }
@@ -150,7 +146,7 @@ impl ResourceTable for ContainerTable {
 
         let is_selected_container_running = self
             .get_selected_row()
-            .map(|c| is_container_running(&c.state));
+            .map(|c| is_container_running(c.state));
         let mut footer_text = get_footer_text(self.show_all, is_selected_container_running);
 
         if let Some(err) = &self.err {
@@ -170,7 +166,7 @@ impl ContainerTable {
             .items
             .iter()
             .enumerate()
-            .filter(|(_, container)| self.show_all || String::eq(&container.state, "running"))
+            .filter(|(_, container)| self.show_all || is_container_running(container.state))
             .map(|(index, _)| index)
             .collect()
     }
@@ -242,8 +238,24 @@ impl ContainerTable {
 }
 
 impl ContainerTableRow {
-    const fn ref_array(&self) -> [&String; 5] {
-        [&self.id, &self.name, &self.image, &self.state, &self.ports]
+    fn cells(&self) -> [String; 5] {
+        let ports_text = if self.ports.is_empty() {
+            "-".to_string()
+        } else {
+            self.ports
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<String>>()
+                .join("\n")
+        };
+
+        [
+            self.id.clone(),
+            self.name.clone(),
+            self.image.clone(),
+            state_label(self.state),
+            ports_text,
+        ]
     }
 
     pub fn from_list(containers: Vec<ContainerSummary>) -> Vec<Self> {
@@ -253,13 +265,13 @@ impl ContainerTableRow {
             .collect::<Vec<ContainerTableRow>>();
 
         result_list.sort_by(|p, n| {
-            let p_is_running = p.state.starts_with("r");
-            let n_is_running = n.state.starts_with("r");
+            let p_is_running = p.state == ContainerStateStatusEnum::RUNNING;
+            let n_is_running = n.state == ContainerStateStatusEnum::RUNNING;
 
             match (p_is_running, n_is_running) {
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,
-                _ => p.state.cmp(&n.state),
+                _ => p.state.as_ref().cmp(n.state.as_ref()),
             }
         });
 
@@ -278,29 +290,14 @@ impl ContainerTableRow {
             id: container.id.as_deref().unwrap_or("-").to_string(),
             name,
             image: container.image.as_deref().unwrap_or("-").to_string(),
-            state: container.state.as_deref().unwrap_or("-").to_string(),
+            state: parse_container_state(container.state.as_deref()),
             ports: container
                 .ports
-                .as_ref()
-                .map_or("-".to_string(), |p| get_ports_text(p)),
+                .as_deref()
+                .map(PortMapping::from_summary_ports)
+                .unwrap_or_default(),
         }
     }
-}
-
-fn get_ports_text(ports: &[Port]) -> String {
-    let mut filtered_ports: Vec<(u16, u16, PortTypeEnum)> = ports
-        .iter()
-        .filter_map(|p| Some((p.private_port, p.public_port?, p.typ?)))
-        .collect();
-
-    filtered_ports.sort_by_key(|&(private, _, _)| private);
-    filtered_ports.dedup();
-
-    filtered_ports
-        .iter()
-        .map(|&(private, public, typ)| format!("{private}:{public}/{typ}"))
-        .collect::<Vec<String>>()
-        .join("\n")
 }
 
 fn get_footer_text(show_all: bool, is_running: Option<bool>) -> String {
@@ -317,4 +314,70 @@ fn get_footer_text(show_all: bool, is_running: Option<bool>) -> String {
     }
 
     format!(" <Ent> details | <T> {toggle_text}{op_text}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn summary_with_state(state: &str) -> ContainerSummary {
+        ContainerSummary {
+            id: Some(format!("id-{state}")),
+            names: Some(vec![format!("/{state}")]),
+            image: Some("image".to_string()),
+            state: Some(state.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn from_list_sorts_running_first_and_others_alphabetically_by_state() {
+        let containers = vec![
+            summary_with_state("exited"),
+            summary_with_state("restarting"),
+            summary_with_state("created"),
+            summary_with_state("running"),
+            summary_with_state("paused"),
+        ];
+
+        let rows = ContainerTableRow::from_list(containers);
+        let states: Vec<ContainerStateStatusEnum> = rows.iter().map(|r| r.state).collect();
+
+        // Running must come first.
+        assert_eq!(states[0], ContainerStateStatusEnum::RUNNING);
+        // "restarting" is not "running", so it must not be treated as running.
+        assert_ne!(states[1], ContainerStateStatusEnum::RESTARTING);
+
+        // Remaining rows are ordered alphabetically by state name:
+        // created < exited < paused < restarting.
+        let non_running_states: Vec<ContainerStateStatusEnum> = states[1..].to_vec();
+        assert_eq!(
+            non_running_states,
+            vec![
+                ContainerStateStatusEnum::CREATED,
+                ContainerStateStatusEnum::EXITED,
+                ContainerStateStatusEnum::PAUSED,
+                ContainerStateStatusEnum::RESTARTING,
+            ]
+        );
+    }
+
+    #[test]
+    fn from_strips_leading_slash_from_name() {
+        let container = summary_with_state("running");
+        let row = ContainerTableRow::from(&container);
+        assert_eq!(row.name, "running");
+    }
+
+    #[test]
+    fn cells_fall_back_to_dash_for_missing_fields() {
+        let container = ContainerSummary::default();
+        let row = ContainerTableRow::from(&container);
+        let cells = row.cells();
+
+        assert_eq!(cells[0], "-"); // id
+        assert_eq!(cells[2], "-"); // image
+        assert_eq!(cells[3], "-"); // state (EMPTY)
+        assert_eq!(cells[4], "-"); // ports
+    }
 }
