@@ -78,10 +78,10 @@ impl EventTask {
                 _ = self.sender.closed() => break,
                 _ = tick_delay => self.send(Event::Tick),
                 Some(Ok(event)) = crossterm_event => {
-                    if let Key(key) = event {
-                        if key.kind == KeyEventKind::Press {
-                            self.send(Event::Crossterm(key))
-                        }
+                    if let Key(key) = event
+                        && key.kind == KeyEventKind::Press
+                    {
+                        self.send(Event::Crossterm(key))
                     }
                 }
             };
