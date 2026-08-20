@@ -54,7 +54,9 @@ cargo run --release
 
 ## Contributing
 
-Contributions are welcome! Please open issues or pull requests on [GitHub](https://github.com/scnplt/crabd).
+Contributions are welcome! Please open issues or pull requests on [GitHub](https://github.com/scnplt/crabd) and read [CONTRIBUTING.md](./CONTRIBUTING.md) first for the branching model, commit conventions, and checks.
+
+All repository content — code, comments, documentation, commit messages, issues, and pull requests — must be written in English.
 
 ## License
 
