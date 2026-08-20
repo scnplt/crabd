@@ -5,7 +5,7 @@ use crate::ui::container_table::{ContainerTable, ContainerTableRow};
 use crate::ui::image_table::{ImageTable, ImageTableRow};
 use crate::ui::info_block::ScrollableInfoBlock;
 use crate::ui::network_table::{NetworkTable, NetworkTableRow};
-use crate::ui::resource_table::ResourceTable;
+use crate::ui::resource_table::{ResourceRow, ResourceTable};
 use crate::ui::volume_table::{VolumeTable, VolumeTableRow};
 use color_eyre::eyre::Result;
 use ratatui::Frame;
@@ -215,14 +215,14 @@ impl App {
 
     async fn restart_container(&mut self, container_id: String) -> Result<()> {
         if let Err(e) = self.docker_client.restart_container(&container_id).await {
-            self.container_table.show_container_err(e.to_string());
+            self.container_table.show_err(e.to_string());
         }
         Ok(())
     }
 
     async fn remove_container(&mut self, container_id: String) -> Result<()> {
         if let Err(e) = self.docker_client.remove_container(&container_id).await {
-            self.container_table.show_container_err(e.to_string());
+            self.container_table.show_err(e.to_string());
         }
         Ok(())
     }
@@ -261,21 +261,21 @@ impl App {
 
     async fn remove_volume(&mut self, name: String, force: bool) -> Result<()> {
         if let Err(e) = self.docker_client.remove_volume(&name, force).await {
-            self.volume_table.show_remove_volume_err(e.to_string());
+            self.volume_table.show_err(e.to_string());
         }
         Ok(())
     }
 
     async fn remove_network(&mut self, name: String) -> Result<()> {
         if let Err(e) = self.docker_client.remove_network(&name).await {
-            self.network_table.show_remove_network_err(e.to_string());
+            self.network_table.show_err(e.to_string());
         }
         Ok(())
     }
 
     async fn remove_image(&mut self, id: String, force: bool) -> Result<()> {
         if let Err(e) = self.docker_client.remove_image(&id, force).await {
-            self.image_table.show_remove_image_err(e.to_string());
+            self.image_table.show_err(e.to_string());
         }
         Ok(())
     }

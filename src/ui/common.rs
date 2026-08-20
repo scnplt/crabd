@@ -6,6 +6,26 @@ use ratatui::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const REFRESH_AFTER_TICK: u8 = 10;
+
+#[derive(Default, Clone)]
+pub struct RefreshTicker {
+    skipped_tick_count: u8,
+}
+
+impl RefreshTicker {
+    /// Returns true once every `REFRESH_AFTER_TICK + 2` ticks, resetting the counter.
+    pub fn should_refresh(&mut self) -> bool {
+        if self.skipped_tick_count <= REFRESH_AFTER_TICK {
+            self.skipped_tick_count += 1;
+            false
+        } else {
+            self.skipped_tick_count = 0;
+            true
+        }
+    }
+}
+
 pub struct TableStyle {
     pub header_style: Style,
     pub selected_row_style: Style,
@@ -33,11 +53,28 @@ impl Default for TableStyle {
     }
 }
 
-pub fn render_scrollbar(frame: &mut Frame, area: Rect, state: &mut ScrollbarState, is_vertical: bool) {
+pub fn render_scrollbar(
+    frame: &mut Frame,
+    area: Rect,
+    state: &mut ScrollbarState,
+    is_vertical: bool,
+) {
     let (orientation, begin_symbol, end_symbol, track_symbol, thumb_symbol) = if is_vertical {
-        (ScrollbarOrientation::VerticalRight, Some("^"), Some("v"), Some("│"), "█")
+        (
+            ScrollbarOrientation::VerticalRight,
+            Some("^"),
+            Some("v"),
+            Some("│"),
+            "█",
+        )
     } else {
-        (ScrollbarOrientation::HorizontalBottom, Some("<"), Some(">"), Some("─"), "■")
+        (
+            ScrollbarOrientation::HorizontalBottom,
+            Some("<"),
+            Some(">"),
+            Some("─"),
+            "■",
+        )
     };
 
     let scrollbar = Scrollbar::new(orientation)
@@ -94,5 +131,25 @@ pub fn time_ago_string(epoch_secs: i64) -> String {
         format!("{value} {unit}{plural} ago")
     } else {
         format!("in {value} {unit}{plural}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refresh_ticker_fires_every_twelfth_tick() {
+        let mut ticker = RefreshTicker::default();
+
+        for _ in 0..11 {
+            assert!(!ticker.should_refresh());
+        }
+        assert!(ticker.should_refresh());
+
+        for _ in 0..11 {
+            assert!(!ticker.should_refresh());
+        }
+        assert!(ticker.should_refresh());
     }
 }
