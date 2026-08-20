@@ -1,5 +1,6 @@
 debug/
 target/
+.claude/PRPs/
 
 **/*.rs.bak
 *.pdb
