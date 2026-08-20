@@ -49,8 +49,41 @@ impl ResourceTable for ContainerTable {
         &mut self.info
     }
 
+    // The selection index refers to the rendered (filtered) rows, so it must be
+    // resolved and wrapped against the visible list, not `items`.
+    fn get_selected_row(&mut self) -> Option<&Self::RowType> {
+        let index = self.info.state.selected()?;
+        let item_index = *self.visible_indices().get(index)?;
+        self.info.items.get(item_index)
+    }
+
+    fn next_row(&mut self) {
+        let Some(last_index) = self.visible_indices().len().checked_sub(1) else {
+            return;
+        };
+        let next_index = self
+            .info
+            .state
+            .selected()
+            .map_or(0, |i| if i >= last_index { 0 } else { i + 1 });
+        self.select_row(next_index);
+    }
+
+    fn previous_row(&mut self) {
+        let Some(last_index) = self.visible_indices().len().checked_sub(1) else {
+            return;
+        };
+        let previous_index = self
+            .info
+            .state
+            .selected()
+            .map_or(0, |i| if i == 0 { last_index } else { i - 1 });
+        self.select_row(previous_index);
+    }
+
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
-        let header = ["ID", "Name", "Image", "State", "Ports"].into_iter()
+        let header = ["ID", "Name", "Image", "State", "Ports"]
+            .into_iter()
             .map(Cell::from)
             .collect::<Row>()
             .style(self.style.header_style)
@@ -58,15 +91,33 @@ impl ResourceTable for ContainerTable {
 
         self.info.row_heights.clear();
 
-        let rows = self.info.items.iter().enumerate()
-            .filter(|(_, container)| self.show_all || String::eq(&container.state, "running"))
+        let show_all = self.show_all;
+        let visible_items: Vec<&ContainerTableRow> = self
+            .info
+            .items
+            .iter()
+            .filter(|container| show_all || String::eq(&container.state, "running"))
+            .collect();
+        let visible_count = visible_items.len();
+
+        let rows = visible_items
+            .into_iter()
+            .enumerate()
             .map(|(index, container)| {
-                let row_style = if index % 2 == 0 { self.style.row_style } else { self.style.alt_row_style };
+                let row_style = if index % 2 == 0 {
+                    self.style.row_style
+                } else {
+                    self.style.alt_row_style
+                };
                 let item = container.ref_array();
-                let ports: Vec<&str> = container.ports.split("\n").filter(|s| !s.is_empty()).collect();
+                let ports: Vec<&str> = container
+                    .ports
+                    .split("\n")
+                    .filter(|s| !s.is_empty())
+                    .collect();
 
                 let height = if ports.is_empty() { 3 } else { ports.len() + 2 };
-                if index < self.info.items.len() - 1 {
+                if index < visible_count - 1 {
                     self.info.row_heights.push(height);
                 }
 
@@ -97,7 +148,9 @@ impl ResourceTable for ContainerTable {
     fn render_footer(&mut self, frame: &mut Frame, area: Rect) {
         let mut border_style = None;
 
-        let is_selected_container_running = self.get_selected_row().map(|c| is_container_running(&c.state));
+        let is_selected_container_running = self
+            .get_selected_row()
+            .map(|c| is_container_running(&c.state));
         let mut footer_text = get_footer_text(self.show_all, is_selected_container_running);
 
         if let Some(err) = &self.err {
@@ -110,6 +163,18 @@ impl ResourceTable for ContainerTable {
 }
 
 impl ContainerTable {
+    /// Indices into `info.items` for the rows that are currently visible.
+    /// Rendering, navigation and selection resolution all share this view.
+    fn visible_indices(&self) -> Vec<usize> {
+        self.info
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, container)| self.show_all || String::eq(&container.state, "running"))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<Option<AppEvent>> {
         if self.err.is_some() {
             self.err = None;
@@ -119,10 +184,19 @@ impl ContainerTable {
         let event = match key_event.code {
             KeyCode::Char('t') => {
                 self.show_all = !self.show_all;
+                // The old selection index may point past the new visible list; clamp it.
+                if let Some(last_index) = self.visible_indices().len().checked_sub(1) {
+                    let selected = self.info.state.selected().unwrap_or(0);
+                    self.select_row(selected.min(last_index));
+                }
                 None
             }
-            KeyCode::Delete | KeyCode::Char('d') => self.get_selected_row().map(|c| AppEvent::RemoveContainer(c.id.clone())),
-            KeyCode::Enter => self.get_selected_row().map(|c| AppEvent::GoToContainerDetails(c.id.clone())),
+            KeyCode::Delete | KeyCode::Char('d') => self
+                .get_selected_row()
+                .map(|c| AppEvent::RemoveContainer(c.id.clone())),
+            KeyCode::Enter => self
+                .get_selected_row()
+                .map(|c| AppEvent::GoToContainerDetails(c.id.clone())),
             KeyCode::Char(c) => match (c, self.get_selected_row().map(|c| c.id.clone())) {
                 ('r', Some(id)) => Some(AppEvent::RestartContainer(id)),
                 ('s', Some(id)) => Some(AppEvent::StopContainer(id)),
@@ -140,7 +214,7 @@ impl ContainerTable {
 
         // If there is items but no row selected, select the first row.
         // This happens when changing the `self.show_all` parameter.
-        if self.info.state.selected().is_none() && !self.info.items.is_empty() {
+        if self.info.state.selected().is_none() && !self.visible_indices().is_empty() {
             self.select_row(0);
         }
 
@@ -158,7 +232,10 @@ impl ContainerTable {
     }
 
     pub fn show_container_err(&mut self, err: String) {
-        let err_msg = err.split(":") .collect::<Vec<&str>>().get(2)
+        let err_msg = err
+            .split(":")
+            .collect::<Vec<&str>>()
+            .get(2)
             .map_or("Something went wrong...", |v| v);
         self.err = Some(format!("[ERR] {}", err_msg.trim()))
     }
@@ -170,7 +247,8 @@ impl ContainerTableRow {
     }
 
     pub fn from_list(containers: Vec<ContainerSummary>) -> Vec<Self> {
-        let mut result_list = containers.iter()
+        let mut result_list = containers
+            .iter()
             .map(ContainerTableRow::from)
             .collect::<Vec<ContainerTableRow>>();
 
@@ -189,7 +267,9 @@ impl ContainerTableRow {
     }
 
     fn from(container: &ContainerSummary) -> Self {
-        let name: String = container.names.as_deref()
+        let name: String = container
+            .names
+            .as_deref()
             .and_then(|names| names.first())
             .and_then(|name| name.strip_prefix("/"))
             .map_or("NaN".to_string(), |name| name.to_string());
@@ -199,20 +279,25 @@ impl ContainerTableRow {
             name,
             image: container.image.as_deref().unwrap_or("-").to_string(),
             state: container.state.as_deref().unwrap_or("-").to_string(),
-            ports: container.ports.as_ref().map_or("-".to_string(), |p| get_ports_text(p)),
+            ports: container
+                .ports
+                .as_ref()
+                .map_or("-".to_string(), |p| get_ports_text(p)),
         }
     }
 }
 
 fn get_ports_text(ports: &[Port]) -> String {
-    let mut filtered_ports: Vec<(u16, u16, PortTypeEnum)> = ports.iter()
+    let mut filtered_ports: Vec<(u16, u16, PortTypeEnum)> = ports
+        .iter()
         .filter_map(|p| Some((p.private_port, p.public_port?, p.typ?)))
         .collect();
 
     filtered_ports.sort_by_key(|&(private, _, _)| private);
     filtered_ports.dedup();
 
-    filtered_ports.iter()
+    filtered_ports
+        .iter()
         .map(|&(private, public, typ)| format!("{private}:{public}/{typ}"))
         .collect::<Vec<String>>()
         .join("\n")
@@ -223,7 +308,11 @@ fn get_footer_text(show_all: bool, is_running: Option<bool>) -> String {
     let mut op_text = "".to_string();
 
     if let Some(running) = is_running {
-        let running_text = if running { "restart | <S> stop | <X> kill " } else { "start " };
+        let running_text = if running {
+            "restart | <S> stop | <X> kill "
+        } else {
+            "start "
+        };
         op_text = format!(" | <R> {running_text}| <Del/D> remove");
     }
 
