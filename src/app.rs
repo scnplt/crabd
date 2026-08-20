@@ -205,10 +205,10 @@ impl App {
     }
 
     async fn update_container_details(&mut self, container_id: String) -> Result<()> {
-        if let Some(data) = self.get_container_data(container_id).await {
-            if let Some(info_block) = self.container_info.as_mut() {
-                info_block.update_data(data);
-            }
+        if let Some(data) = self.get_container_data(container_id).await
+            && let Some(info_block) = self.container_info.as_mut()
+        {
+            info_block.update_data(data);
         }
         Ok(())
     }
