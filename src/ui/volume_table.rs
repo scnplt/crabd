@@ -2,7 +2,7 @@ use bollard::secret::Volume;
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
-    layout::{Constraint, Rect}, style::{Style, Stylize}, text::Text, widgets::{Cell, HighlightSpacing, Row, Table}, Frame
+    layout::{Constraint, Rect}, style::Style, text::Text, widgets::{Cell, HighlightSpacing, Row, Table}, Frame
 };
 use regex::Regex;
 
