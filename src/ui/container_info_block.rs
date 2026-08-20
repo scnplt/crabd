@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::docker::models::{Mount, PortConfig};
 use crate::{event::AppEvent, utils::is_container_running};
 
-use super::common::{render_footer, render_scrollbar};
+use super::common::{RefreshTicker, render_footer, render_scrollbar};
 use bollard::secret::{ContainerInspectResponse, ContainerStateStatusEnum};
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -21,7 +21,7 @@ use super::info_block::{ScrollInfo, ScrollableInfoBlock};
 pub struct ContainerInfoBlock {
     data: ContainerData,
     scroll_info: ScrollInfo,
-    skipped_tick_count_for_refresh: u8,
+    ticker: RefreshTicker,
 }
 
 #[derive(Clone)]
@@ -140,11 +140,9 @@ impl ScrollableInfoBlock for ContainerInfoBlock {
     }
 
     fn tick(&mut self) -> Result<Option<AppEvent>> {
-        let event = if self.skipped_tick_count_for_refresh > 10 {
-            self.skipped_tick_count_for_refresh = 0;
+        let event = if self.ticker.should_refresh() {
             Some(AppEvent::UpdateContainerInfo(self.data.id.clone()))
         } else {
-            self.skipped_tick_count_for_refresh += 1;
             None
         };
         Ok(event)
