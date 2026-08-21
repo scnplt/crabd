@@ -2,14 +2,11 @@ use bollard::secret::Volume;
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Constraint;
-use regex::Regex;
 
 use crate::{
     event::AppEvent,
     ui::resource_table::{KeyOutcome, ResourceRow, ResourceTable, ResourceTableInfo},
 };
-
-const REGEX_VOLUME_IN_USE: &str = r"\[([a-z0-9]+)\]";
 
 #[derive(Default)]
 pub struct VolumeTable {
@@ -61,21 +58,6 @@ impl ResourceTable for VolumeTable {
 
         Ok(outcome)
     }
-
-    fn error_message(&self, raw: &str) -> String {
-        Regex::new(REGEX_VOLUME_IN_USE)
-            .ok()
-            .and_then(|re| re.captures(raw))
-            .and_then(|caps| caps.get(1))
-            .map(|m| {
-                let id = m.as_str();
-                format!(
-                    "Volume is in use by container: {}...",
-                    id.get(..15).unwrap_or(id)
-                )
-            })
-            .unwrap_or_else(|| "Something went wrong...".to_string())
-    }
 }
 
 impl ResourceRow for VolumeTableRow {
@@ -121,29 +103,6 @@ mod tests {
         let names: Vec<String> = rows.iter().map(|r| r.name.clone()).collect();
 
         assert_eq!(names, vec!["alpha", "bravo", "charlie"]);
-    }
-
-    #[test]
-    fn error_message_truncates_long_container_id_to_fifteen_chars() {
-        let table = VolumeTable::default();
-        let msg = table.error_message("volume is in use by container [abcdef0123456789abc]");
-        assert_eq!(msg, "Volume is in use by container: abcdef012345678...");
-    }
-
-    #[test]
-    fn error_message_leaves_short_container_id_untruncated() {
-        let table = VolumeTable::default();
-        let msg = table.error_message("volume is in use by container [abc123]");
-        assert_eq!(msg, "Volume is in use by container: abc123...");
-    }
-
-    #[test]
-    fn error_message_falls_back_when_no_bracketed_id() {
-        let table = VolumeTable::default();
-        assert_eq!(
-            table.error_message("some unrelated error"),
-            "Something went wrong..."
-        );
     }
 
     #[test]
