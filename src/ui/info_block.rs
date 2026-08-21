@@ -41,7 +41,8 @@ pub trait ScrollableInfoBlock {
 
     fn tick(&mut self) -> Result<Option<AppEvent>>;
 
-    fn update_data(&mut self, data: Self::Data);
+    /// Returns true when the visible content changed.
+    fn update_data(&mut self, data: Self::Data) -> bool;
 
     fn get_scroll_info(&mut self) -> &mut ScrollInfo;
 
@@ -118,7 +119,9 @@ mod tests {
             Ok(None)
         }
 
-        fn update_data(&mut self, _data: Self::Data) {}
+        fn update_data(&mut self, _data: Self::Data) -> bool {
+            false
+        }
 
         fn get_scroll_info(&mut self) -> &mut ScrollInfo {
             &mut self.scroll

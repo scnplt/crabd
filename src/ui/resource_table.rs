@@ -45,7 +45,7 @@ impl<RowType> Default for ResourceTableInfo<RowType> {
 }
 
 /// A single row of a `ResourceTable`, projected from a source Docker API type.
-pub trait ResourceRow: Sized {
+pub trait ResourceRow: Sized + PartialEq {
     type Source;
 
     fn from_source(source: &Self::Source) -> Self;
@@ -171,14 +171,18 @@ pub trait ResourceTable {
             .position(table_info.scroll);
     }
 
-    fn update_with_items(&mut self, items: Vec<Self::RowType>) {
+    /// Replaces the rows and reports whether anything visible changed.
+    fn update_with_items(&mut self, items: Vec<Self::RowType>) -> bool {
         let table_info = self.table_info_mut();
+        let changed = table_info.items != items;
         let is_empty_before_update = table_info.items.is_empty();
         table_info.items = items;
 
         if is_empty_before_update && !table_info.items.is_empty() {
             self.select_row(0);
         }
+
+        changed
     }
 
     fn render_table(&mut self, frame: &mut Frame, area: Rect) {
@@ -293,8 +297,13 @@ pub trait ResourceTable {
         }
     }
 
-    fn show_err(&mut self, err: &DockerError) {
-        self.table_info_mut().err = Some(format!("[ERR] {err}"));
+    /// Sets the footer error message and reports whether it differs from the
+    /// previously shown error.
+    fn show_err(&mut self, err: &DockerError) -> bool {
+        let message = format!("[ERR] {err}");
+        let changed = self.table_info().err.as_deref() != Some(message.as_str());
+        self.table_info_mut().err = Some(message);
+        changed
     }
 
     fn begin_pending_op(&mut self) {
@@ -312,7 +321,7 @@ mod tests {
     use super::*;
     use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
-    #[derive(Default, Clone)]
+    #[derive(Default, Clone, PartialEq)]
     struct TestRow {
         label: String,
         visible: bool,
@@ -442,7 +451,7 @@ mod tests {
     fn show_err_formats_typed_error_into_footer() {
         let mut table = TestTable::default();
 
-        table.show_err(&DockerError::Conflict {
+        let changed = table.show_err(&DockerError::Conflict {
             message: "network foo has active endpoints".into(),
         });
 
@@ -450,6 +459,26 @@ mod tests {
             table.info.err,
             Some("[ERR] Conflict: network foo has active endpoints".to_string())
         );
+        assert!(changed);
+
+        let changed_again = table.show_err(&DockerError::Conflict {
+            message: "network foo has active endpoints".into(),
+        });
+        assert!(!changed_again);
+    }
+
+    #[test]
+    fn update_with_items_reports_change_only_when_rows_differ() {
+        let mut table = TestTable::default();
+
+        let changed = table.update_with_items(rows(&[("a", true), ("b", true)]));
+        assert!(changed);
+
+        let changed_again = table.update_with_items(rows(&[("a", true), ("b", true)]));
+        assert!(!changed_again);
+
+        let changed_different = table.update_with_items(rows(&[("a", true), ("c", true)]));
+        assert!(changed_different);
     }
 
     #[test]

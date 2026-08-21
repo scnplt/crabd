@@ -13,7 +13,7 @@ pub struct VolumeTable {
     info: ResourceTableInfo<VolumeTableRow>,
 }
 
-#[derive(Default)]
+#[derive(Default, PartialEq)]
 pub struct VolumeTableRow {
     name: String,
     driver: String,

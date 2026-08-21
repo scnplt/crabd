@@ -4,18 +4,20 @@ use bollard::secret::{
 use color_eyre::eyre::{OptionExt, Result};
 use crossterm::event::KeyEventKind;
 use futures::{FutureExt, StreamExt};
-use ratatui::crossterm::event::{Event::Key, KeyEvent};
+use ratatui::crossterm::event::{Event::Key, Event::Resize, KeyEvent};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::docker::error::DockerResult;
 
-const TICK_FPS: f64 = 30.0;
+/// Ticks now only drive Docker refresh scheduling, not rendering.
+const TICK_FPS: f64 = 5.0;
 
 #[derive(Clone, Debug)]
 pub enum Event {
     Tick,
     Crossterm(KeyEvent),
+    Resize,
     App(AppEvent),
     Docker(DockerOutcome),
 }
@@ -130,10 +132,8 @@ impl EventTask {
                 _ = self.sender.closed() => break,
                 _ = tick_delay => self.send(Event::Tick),
                 Some(Ok(event)) = crossterm_event => {
-                    if let Key(key) = event
-                        && key.kind == KeyEventKind::Press
-                    {
-                        self.send(Event::Crossterm(key))
+                    if let Some(event) = map_crossterm_event(event) {
+                        self.send(event)
                     }
                 }
             };
@@ -144,6 +144,17 @@ impl EventTask {
 
     fn send(&self, event: Event) {
         let _ = self.sender.send(event);
+    }
+}
+
+/// Maps a raw crossterm event to the subset of `Event`s the app cares about.
+/// Only key-press events and terminal resizes are forwarded; everything else
+/// (key release/repeat, mouse, focus, paste) is discarded.
+fn map_crossterm_event(event: crossterm::event::Event) -> Option<Event> {
+    match event {
+        Key(key) if key.kind == KeyEventKind::Press => Some(Event::Crossterm(key)),
+        Resize(..) => Some(Event::Resize),
+        _ => None,
     }
 }
 
@@ -159,6 +170,29 @@ mod tests {
 
         let event = handler.next().await.unwrap();
         assert!(matches!(event, Event::App(AppEvent::Quit)));
+    }
+
+    #[test]
+    fn map_crossterm_event_forwards_key_press_and_resize_only() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let key_press =
+            crossterm::event::Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        assert!(matches!(
+            map_crossterm_event(key_press),
+            Some(Event::Crossterm(_))
+        ));
+
+        let mut key_release = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
+        key_release.kind = KeyEventKind::Release;
+        assert!(map_crossterm_event(Key(key_release)).is_none());
+
+        assert!(matches!(
+            map_crossterm_event(Resize(80, 24)),
+            Some(Event::Resize)
+        ));
+
+        assert!(map_crossterm_event(crossterm::event::Event::FocusGained).is_none());
     }
 
     #[tokio::test]

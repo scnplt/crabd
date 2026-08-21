@@ -18,7 +18,7 @@ pub struct ImageTable {
     info: ResourceTableInfo<ImageTableRow>,
 }
 
-#[derive(Default)]
+#[derive(Default, PartialEq)]
 pub struct ImageTableRow {
     id: String,
     tags: String,
