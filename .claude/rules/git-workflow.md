@@ -38,6 +38,14 @@ Rules:
 
 Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`
 
+## Issue Workflow
+
+When creating issues:
+
+- Always add the appropriate label(s) at creation time (`gh issue create --label ...`).
+  Available labels include `bug`, `enhancement`, `documentation`, `question`,
+  `good first issue`, `help wanted`; check `gh label list` when unsure.
+
 ## Pull Request Workflow
 
 When creating PRs:
@@ -48,3 +56,7 @@ When creating PRs:
 4. Include a test plan
 5. Push with `-u` on the first push of a new branch
 6. A PR that closes an issue carries a bare `Closes #N` line in its body
+7. Always link the PR to its related issue (`Closes #N` for fixes, `Refs #N`
+   for partial work) and add the matching label(s) to the PR as well
+   (`gh pr create --label ...` / `gh pr edit --add-label ...`), mirroring the
+   issue's labels (e.g. `bug` for a fix, `enhancement` for a feature)
