@@ -9,6 +9,7 @@ use bollard::network::ListNetworksOptions;
 use bollard::secret::{ContainerInspectResponse, ImageSummary, Network, VolumeListResponse};
 use bollard::volume::{ListVolumesOptions, RemoveVolumeOptions};
 use color_eyre::eyre::Result;
+use std::future::Future;
 
 use crate::docker::error::DockerResult;
 
@@ -25,23 +26,32 @@ impl DockerClient {
     }
 }
 
-/// Crate-internal trait, App is awaited directly by #[tokio::main] and never
-/// tokio::spawn-ed, so no Send bound is required.
-#[allow(async_fn_in_trait)]
-pub trait DockerApi {
-    async fn list_containers(&self) -> DockerResult<Vec<ContainerSummary>>;
-    async fn stop_container(&self, container_id: &str) -> DockerResult<()>;
-    async fn restart_container(&self, container_id: &str) -> DockerResult<()>;
-    async fn kill_container(&self, container_id: &str) -> DockerResult<()>;
-    async fn remove_container(&self, container_id: &str) -> DockerResult<()>;
-    async fn inspect_container(&self, container_id: &str)
-    -> DockerResult<ContainerInspectResponse>;
-    async fn list_volumes(&self) -> DockerResult<VolumeListResponse>;
-    async fn remove_volume(&self, name: &str, force: bool) -> DockerResult<()>;
-    async fn list_networks(&self) -> DockerResult<Vec<Network>>;
-    async fn remove_network(&self, name: &str) -> DockerResult<()>;
-    async fn list_images(&self) -> DockerResult<Vec<ImageSummary>>;
-    async fn remove_image(&self, id: &str, force: bool) -> DockerResult<()>;
+/// Crate-internal Docker surface. Methods return `Send` futures because `App`
+/// spawns them as background tasks (see `App::spawn_docker`).
+pub trait DockerApi: Clone + Send + Sync + 'static {
+    fn list_containers(&self) -> impl Future<Output = DockerResult<Vec<ContainerSummary>>> + Send;
+    fn stop_container(&self, container_id: &str) -> impl Future<Output = DockerResult<()>> + Send;
+    fn restart_container(
+        &self,
+        container_id: &str,
+    ) -> impl Future<Output = DockerResult<()>> + Send;
+    fn kill_container(&self, container_id: &str) -> impl Future<Output = DockerResult<()>> + Send;
+    fn remove_container(&self, container_id: &str)
+    -> impl Future<Output = DockerResult<()>> + Send;
+    fn inspect_container(
+        &self,
+        container_id: &str,
+    ) -> impl Future<Output = DockerResult<ContainerInspectResponse>> + Send;
+    fn list_volumes(&self) -> impl Future<Output = DockerResult<VolumeListResponse>> + Send;
+    fn remove_volume(
+        &self,
+        name: &str,
+        force: bool,
+    ) -> impl Future<Output = DockerResult<()>> + Send;
+    fn list_networks(&self) -> impl Future<Output = DockerResult<Vec<Network>>> + Send;
+    fn remove_network(&self, name: &str) -> impl Future<Output = DockerResult<()>> + Send;
+    fn list_images(&self) -> impl Future<Output = DockerResult<Vec<ImageSummary>>> + Send;
+    fn remove_image(&self, id: &str, force: bool) -> impl Future<Output = DockerResult<()>> + Send;
 }
 
 impl DockerApi for DockerClient {

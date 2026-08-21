@@ -1,9 +1,14 @@
+use bollard::secret::{
+    ContainerInspectResponse, ContainerSummary, ImageSummary, Network, VolumeListResponse,
+};
 use color_eyre::eyre::{OptionExt, Result};
 use crossterm::event::KeyEventKind;
 use futures::{FutureExt, StreamExt};
 use ratatui::crossterm::event::{Event::Key, KeyEvent};
 use std::time::Duration;
 use tokio::sync::mpsc;
+
+use crate::docker::error::DockerResult;
 
 const TICK_FPS: f64 = 30.0;
 
@@ -12,6 +17,7 @@ pub enum Event {
     Tick,
     Crossterm(KeyEvent),
     App(AppEvent),
+    Docker(DockerOutcome),
 }
 
 #[derive(Clone, Debug)]
@@ -31,6 +37,32 @@ pub enum AppEvent {
     UpdateImages,
     RemoveImage(String, bool),
     Back,
+}
+
+/// Outcome of a background Docker operation, delivered back through the event channel
+/// once the spawned task that ran it completes.
+#[derive(Clone, Debug)]
+pub enum DockerOutcome {
+    ContainersListed(DockerResult<Vec<ContainerSummary>>),
+    VolumesListed(DockerResult<VolumeListResponse>),
+    NetworksListed(DockerResult<Vec<Network>>),
+    ImagesListed(DockerResult<Vec<ImageSummary>>),
+    ContainerInspected {
+        open_details: bool,
+        result: DockerResult<Box<ContainerInspectResponse>>,
+    },
+    ActionCompleted {
+        resource: ResourceKind,
+        result: DockerResult<()>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResourceKind {
+    Containers,
+    Volumes,
+    Networks,
+    Images,
 }
 
 #[derive(Debug)]
@@ -58,12 +90,22 @@ impl EventHandler {
         let _ = self.sender.send(Event::App(app_event));
     }
 
+    /// Clone of the event channel sender, for background tasks that report Docker results.
+    pub fn sender(&self) -> mpsc::UnboundedSender<Event> {
+        self.sender.clone()
+    }
+
     /// Test-only constructor; skips the crossterm reader task so `App` can be driven
     /// deterministically without a terminal.
     #[cfg(test)]
     pub fn new_without_reader() -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
         Self { sender, receiver }
+    }
+
+    #[cfg(test)]
+    pub fn try_next(&mut self) -> Option<Event> {
+        self.receiver.try_recv().ok()
     }
 }
 
@@ -117,5 +159,27 @@ mod tests {
 
         let event = handler.next().await.unwrap();
         assert!(matches!(event, Event::App(AppEvent::Quit)));
+    }
+
+    #[tokio::test]
+    async fn docker_outcome_is_delivered_through_the_sender_clone() {
+        let mut handler = EventHandler::new_without_reader();
+        let sender = handler.sender();
+
+        sender
+            .send(Event::Docker(DockerOutcome::ActionCompleted {
+                resource: ResourceKind::Containers,
+                result: Ok(()),
+            }))
+            .unwrap();
+
+        let event = handler.next().await.unwrap();
+        assert!(matches!(
+            event,
+            Event::Docker(DockerOutcome::ActionCompleted {
+                resource: ResourceKind::Containers,
+                result: Ok(())
+            })
+        ));
     }
 }
