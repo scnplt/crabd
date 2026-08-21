@@ -102,8 +102,15 @@ impl ResourceRow for ImageTableRow {
     }
 
     fn sort_rows(rows: &mut Vec<Self>) {
-        rows.sort_by_key(|r| r.created_epoch);
-        rows.reverse();
+        // `created` has second resolution, so multi-tag builds of the same
+        // project tie on it; break ties deterministically so rows do not
+        // follow the daemon's unstable tie order and swap on every refresh.
+        rows.sort_by(|a, b| {
+            b.created_epoch
+                .cmp(&a.created_epoch)
+                .then_with(|| a.tags.cmp(&b.tags))
+                .then_with(|| a.id.cmp(&b.id))
+        });
     }
 }
 
@@ -126,6 +133,40 @@ mod tests {
         let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
 
         assert_eq!(ids, vec!["b", "c", "a"]);
+    }
+
+    #[test]
+    fn from_list_orders_identical_creation_times_deterministically() {
+        let mut dev = image("aaa", 100);
+        dev.repo_tags = vec!["devmon-agent:dev".to_string()];
+        let mut local = image("bbb", 100);
+        local.repo_tags = vec!["devmon-agent:local".to_string()];
+
+        // The daemon's tie order is unstable; both input orders must yield
+        // the same on-screen order.
+        let tags_of = |rows: &[ImageTableRow]| -> Vec<String> {
+            rows.iter().map(|r| r.tags.clone()).collect()
+        };
+
+        let one_way = ImageTableRow::from_list(vec![dev.clone(), local.clone()]);
+        let other_way = ImageTableRow::from_list(vec![local, dev]);
+
+        assert_eq!(tags_of(&one_way), tags_of(&other_way));
+        assert_eq!(
+            tags_of(&one_way),
+            vec!["devmon-agent:dev", "devmon-agent:local"]
+        );
+    }
+
+    #[test]
+    fn from_list_breaks_full_ties_by_id() {
+        let untagged_b = image("bbb", 100);
+        let untagged_a = image("aaa", 100);
+
+        let rows = ImageTableRow::from_list(vec![untagged_b, untagged_a]);
+        let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
+
+        assert_eq!(ids, vec!["aaa", "bbb"]);
     }
 
     #[test]
