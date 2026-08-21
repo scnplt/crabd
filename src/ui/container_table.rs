@@ -168,7 +168,13 @@ impl ResourceRow for ContainerTableRow {
             match (p_is_running, n_is_running) {
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,
-                _ => p.state.as_ref().cmp(n.state.as_ref()),
+                // Tie-break equal states by name so row order does not depend
+                // on the order the daemon returned the containers in.
+                _ => p
+                    .state
+                    .as_ref()
+                    .cmp(n.state.as_ref())
+                    .then_with(|| p.name.cmp(&n.name)),
             }
         });
     }
@@ -235,6 +241,27 @@ mod tests {
                 ContainerStateStatusEnum::RESTARTING,
             ]
         );
+    }
+
+    #[test]
+    fn from_list_breaks_equal_state_ties_by_name() {
+        let named = |name: &str| ContainerSummary {
+            id: Some(format!("id-{name}")),
+            names: Some(vec![format!("/{name}")]),
+            state: Some("exited".to_string()),
+            ..Default::default()
+        };
+
+        let names_of = |rows: &[ContainerTableRow]| -> Vec<String> {
+            rows.iter().map(|r| r.name.clone()).collect()
+        };
+
+        // Both input orders must yield the same on-screen order.
+        let one_way = ContainerTableRow::from_list(vec![named("bravo"), named("alpha")]);
+        let other_way = ContainerTableRow::from_list(vec![named("alpha"), named("bravo")]);
+
+        assert_eq!(names_of(&one_way), names_of(&other_way));
+        assert_eq!(names_of(&one_way), vec!["alpha", "bravo"]);
     }
 
     #[test]
