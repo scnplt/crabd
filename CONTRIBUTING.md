@@ -6,7 +6,15 @@ keep the history clean and reviews cheap.
 ## Before you write code
 
 For anything more than a small fix, open an issue first so the change can be
-discussed before you invest time in it.
+discussed before you invest time in it. Label the issue when you open it
+(`bug`, `enhancement`, `documentation`, ...).
+
+## Pull requests
+
+- Link the PR to its issue: a bare `Closes #N` line in the body for a PR that
+  finishes the issue, `Refs #N` for partial work.
+- Mirror the issue's labels on the PR (e.g. `bug` for a fix, `enhancement`
+  for a feature).
 
 ## Language
 
