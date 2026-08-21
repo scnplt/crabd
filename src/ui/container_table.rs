@@ -16,6 +16,7 @@ pub struct ContainerTable {
     info: ResourceTableInfo<ContainerTableRow>,
 }
 
+#[derive(PartialEq)]
 pub struct ContainerTableRow {
     id: String,
     name: String,

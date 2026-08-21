@@ -16,7 +16,7 @@ pub struct NetworkTable {
     info: ResourceTableInfo<NetworkTableRow>,
 }
 
-#[derive(Default)]
+#[derive(Default, PartialEq)]
 pub struct NetworkTableRow {
     id: String,
     name: String,

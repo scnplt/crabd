@@ -22,9 +22,11 @@ pub struct ContainerInfoBlock {
     data: ContainerData,
     scroll_info: ScrollInfo,
     ticker: RefreshTicker,
+    content_lines: Vec<Line<'static>>,
+    max_line_width: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct ContainerData {
     id: String,
     name: String,
@@ -88,19 +90,15 @@ impl ScrollableInfoBlock for ContainerInfoBlock {
         let horizontal_layout = Layout::horizontal([Min(0), Length(1)]);
         let [info_area, vertical_scrollbar_area] = horizontal_layout.areas(content_area);
 
-        let content_lines = get_content_as_lines(&self.data);
-
-        let max_horizontal = content_lines.iter().fold(0, |max, line| {
-            let line_len = line.to_string().len();
-            if line_len > max { line_len } else { max }
-        });
-
-        self.scroll_info.max_horizontal =
-            max_horizontal.saturating_sub(info_area.width as usize - 2);
-        self.scroll_info.max_vertical = content_lines
+        self.scroll_info.max_horizontal = self
+            .max_line_width
+            .saturating_sub(info_area.width as usize - 2);
+        self.scroll_info.max_vertical = self
+            .content_lines
             .len()
             .saturating_sub(info_area.height as usize - 2);
 
+        let content_lines = self.content_lines.clone();
         self.render_content(frame, info_area, content_lines);
 
         self.scroll_info.vertical_state = self
@@ -148,8 +146,13 @@ impl ScrollableInfoBlock for ContainerInfoBlock {
         Ok(event)
     }
 
-    fn update_data(&mut self, data: Self::Data) {
+    fn update_data(&mut self, data: Self::Data) -> bool {
+        if self.data == data {
+            return false;
+        }
         self.data = data;
+        self.rebuild_content_cache();
+        true
     }
 
     fn get_scroll_info(&mut self) -> &mut super::info_block::ScrollInfo {
@@ -158,6 +161,14 @@ impl ScrollableInfoBlock for ContainerInfoBlock {
 }
 
 impl ContainerInfoBlock {
+    fn rebuild_content_cache(&mut self) {
+        self.content_lines = get_content_as_lines(&self.data);
+        self.max_line_width = self.content_lines.iter().fold(0, |max, line| {
+            let line_len = line.to_string().len();
+            if line_len > max { line_len } else { max }
+        });
+    }
+
     fn render_content(&mut self, frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>) {
         let block_style = Style::new().fg(tailwind::BLUE.c400);
 
@@ -511,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn tick_fires_exactly_once_every_twelve_ticks() {
+    fn tick_fires_once_every_two_ticks() {
         let mut block = ContainerInfoBlock {
             data: ContainerData::from(container_with_id("container-id")),
             ..Default::default()
@@ -524,7 +535,7 @@ mod tests {
             }
         }
 
-        assert_eq!(fired, 1);
+        assert_eq!(fired, 6);
     }
 
     #[test]
@@ -583,5 +594,50 @@ mod tests {
         let labels_index = lines.iter().position(|l| l.starts_with("Labels:")).unwrap();
         assert!(lines[labels_index + 1].contains("a: first"));
         assert!(lines[labels_index + 2].contains("z: last"));
+    }
+
+    #[test]
+    fn update_data_caches_lines_and_max_width() {
+        let mut block = ContainerInfoBlock::default();
+
+        let changed = block.update_data(ContainerData::from(container_with_id("abc")));
+        assert!(changed);
+
+        assert!(!block.content_lines.is_empty());
+        assert!(
+            block
+                .content_lines
+                .iter()
+                .any(|l| l.to_string().starts_with("ID: abc"))
+        );
+        assert_eq!(
+            block.max_line_width,
+            block
+                .content_lines
+                .iter()
+                .map(|l| l.to_string().len())
+                .max()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn update_data_with_identical_data_is_a_no_op() {
+        let mut block = ContainerInfoBlock::default();
+
+        let changed = block.update_data(ContainerData::from(container_with_id("abc")));
+        assert!(changed);
+
+        let changed_again = block.update_data(ContainerData::from(container_with_id("abc")));
+        assert!(!changed_again);
+
+        let changed_different = block.update_data(ContainerData::from(container_with_id("xyz")));
+        assert!(changed_different);
+        assert!(
+            block
+                .content_lines
+                .iter()
+                .any(|l| l.to_string().starts_with("ID: xyz"))
+        );
     }
 }

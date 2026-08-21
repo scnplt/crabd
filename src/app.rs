@@ -35,6 +35,7 @@ pub struct App<C: DockerApi> {
     image_table: ImageTable,
     pending: PendingRefreshes,
     details_requested: bool,
+    dirty: bool,
 }
 
 /// Tracks in-flight list requests so `App` never has more than one outstanding
@@ -62,6 +63,7 @@ impl App<DockerClient> {
             image_table: ImageTable::default(),
             pending: PendingRefreshes::default(),
             details_requested: false,
+            dirty: true,
         })
     }
 }
@@ -84,6 +86,7 @@ impl<C: DockerApi> App<C> {
             image_table: ImageTable::default(),
             pending: PendingRefreshes::default(),
             details_requested: false,
+            dirty: true,
         }
     }
 
@@ -91,7 +94,10 @@ impl<C: DockerApi> App<C> {
         self.request_containers();
 
         while self.running {
-            terminal.draw(|frame| self.draw(frame, frame.area()))?;
+            if self.dirty {
+                terminal.draw(|frame| self.draw(frame, frame.area()))?;
+                self.dirty = false;
+            }
             self.process_next_event().await?;
         }
         Ok(())
@@ -146,31 +152,51 @@ impl<C: DockerApi> App<C> {
                 }
             }
             Event::Crossterm(key_event) => {
+                self.dirty = true;
                 if let Some(event) = self.handle_key_event(key_event)? {
                     self.events.send(event);
                 }
             }
+            Event::Resize => {
+                self.dirty = true;
+            }
             Event::Docker(outcome) => self.apply_docker_outcome(outcome),
-            Event::App(app_event) => match app_event {
-                AppEvent::Quit => self.quit(),
-                AppEvent::UpdateContainers => self.request_containers(),
-                AppEvent::UpdateContainerInfo(id) => self.request_container_details(id),
-                AppEvent::RestartContainer(id) => self.request_restart_container(id),
-                AppEvent::StopContainer(id) => self.request_stop_container(id),
-                AppEvent::KillContainer(id) => self.request_kill_container(id),
-                AppEvent::RemoveContainer(id) => self.request_remove_container(id),
-                AppEvent::GoToContainerDetails(id) => self.request_container_details_open(id),
-                AppEvent::UpdateVolumes => self.request_volumes(),
-                AppEvent::RemoveVolume(name, force) => self.request_remove_volume(name, force),
-                AppEvent::UpdateNetworks => self.request_networks(),
-                AppEvent::RemoveNetwork(name) => self.request_remove_network(name),
-                AppEvent::UpdateImages => self.request_images(),
-                AppEvent::RemoveImage(id, force) => self.request_remove_image(id, force),
-                AppEvent::Back => {
-                    self.details_requested = false;
-                    self.container_info = None;
+            Event::App(app_event) => {
+                if matches!(
+                    app_event,
+                    AppEvent::Back
+                        | AppEvent::RestartContainer(_)
+                        | AppEvent::StopContainer(_)
+                        | AppEvent::KillContainer(_)
+                        | AppEvent::RemoveContainer(_)
+                        | AppEvent::RemoveVolume(..)
+                        | AppEvent::RemoveNetwork(_)
+                        | AppEvent::RemoveImage(..)
+                ) {
+                    self.dirty = true;
                 }
-            },
+
+                match app_event {
+                    AppEvent::Quit => self.quit(),
+                    AppEvent::UpdateContainers => self.request_containers(),
+                    AppEvent::UpdateContainerInfo(id) => self.request_container_details(id),
+                    AppEvent::RestartContainer(id) => self.request_restart_container(id),
+                    AppEvent::StopContainer(id) => self.request_stop_container(id),
+                    AppEvent::KillContainer(id) => self.request_kill_container(id),
+                    AppEvent::RemoveContainer(id) => self.request_remove_container(id),
+                    AppEvent::GoToContainerDetails(id) => self.request_container_details_open(id),
+                    AppEvent::UpdateVolumes => self.request_volumes(),
+                    AppEvent::RemoveVolume(name, force) => self.request_remove_volume(name, force),
+                    AppEvent::UpdateNetworks => self.request_networks(),
+                    AppEvent::RemoveNetwork(name) => self.request_remove_network(name),
+                    AppEvent::UpdateImages => self.request_images(),
+                    AppEvent::RemoveImage(id, force) => self.request_remove_image(id, force),
+                    AppEvent::Back => {
+                        self.details_requested = false;
+                        self.container_info = None;
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -232,12 +258,13 @@ impl<C: DockerApi> App<C> {
     }
 
     fn report_err(&mut self, tab: SelectedTab, err: &DockerError) {
-        match tab {
+        let changed = match tab {
             SelectedTab::Containers => self.container_table.show_err(err),
             SelectedTab::Volumes => self.volume_table.show_err(err),
             SelectedTab::Networks => self.network_table.show_err(err),
             SelectedTab::Images => self.image_table.show_err(err),
-        }
+        };
+        self.dirty |= changed;
     }
 
     /// Unwraps a Docker result, reporting failures into `tab`'s footer.
@@ -268,6 +295,7 @@ impl<C: DockerApi> App<C> {
             SelectedTab::Networks => self.network_table.begin_pending_op(),
             SelectedTab::Images => self.image_table.begin_pending_op(),
         }
+        self.dirty = true;
     }
 
     fn end_action(&mut self, tab: SelectedTab) {
@@ -277,6 +305,7 @@ impl<C: DockerApi> App<C> {
             SelectedTab::Networks => self.network_table.end_pending_op(),
             SelectedTab::Images => self.image_table.end_pending_op(),
         }
+        self.dirty = true;
     }
 
     /// Runs a Docker operation off the event loop; its outcome comes back as `Event::Docker`.
@@ -428,7 +457,8 @@ impl<C: DockerApi> App<C> {
             DockerOutcome::ContainersListed(result) => {
                 self.pending.containers = false;
                 if let Some(list) = self.ok_or_report(SelectedTab::Containers, result) {
-                    self.container_table
+                    self.dirty |= self
+                        .container_table
                         .update_with_items(ContainerTableRow::from_list(list));
                 }
             }
@@ -437,21 +467,24 @@ impl<C: DockerApi> App<C> {
                 if let Some(response) = self.ok_or_report(SelectedTab::Volumes, result)
                     && let Some(volumes) = response.volumes
                 {
-                    self.volume_table
+                    self.dirty |= self
+                        .volume_table
                         .update_with_items(VolumeTableRow::from_list(volumes));
                 }
             }
             DockerOutcome::NetworksListed(result) => {
                 self.pending.networks = false;
                 if let Some(list) = self.ok_or_report(SelectedTab::Networks, result) {
-                    self.network_table
+                    self.dirty |= self
+                        .network_table
                         .update_with_items(NetworkTableRow::from_list(list));
                 }
             }
             DockerOutcome::ImagesListed(result) => {
                 self.pending.images = false;
                 if let Some(list) = self.ok_or_report(SelectedTab::Images, result) {
-                    self.image_table
+                    self.dirty |= self
+                        .image_table
                         .update_with_items(ImageTableRow::from_list(list));
                 }
             }
@@ -475,8 +508,9 @@ impl<C: DockerApi> App<C> {
                     let mut container_info_block = ContainerInfoBlock::default();
                     container_info_block.update_data(data);
                     self.container_info = Some(Box::new(container_info_block));
+                    self.dirty = true;
                 } else if let Some(block) = self.container_info.as_mut() {
-                    block.update_data(data);
+                    self.dirty |= block.update_data(data);
                 }
             }
             DockerOutcome::ActionCompleted { resource, result } => {
@@ -534,8 +568,8 @@ impl SelectedTab {
 mod tests {
     use super::*;
     use bollard::secret::{
-        ContainerInspectResponse, ContainerSummary, ImageSummary, Network, Volume,
-        VolumeListResponse,
+        ContainerInspectResponse, ContainerStateStatusEnum, ContainerSummary, ImageSummary,
+        Network, Volume, VolumeListResponse,
     };
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::sync::{Arc, Mutex};
@@ -1108,5 +1142,153 @@ mod tests {
             SelectedTab::Containers.title().to_string(),
             "  Containers  "
         );
+    }
+
+    #[test]
+    fn app_starts_dirty() {
+        let mock = MockDockerClient::default();
+        let app = App::with_client(mock);
+        assert!(app.dirty);
+    }
+
+    #[tokio::test]
+    async fn tick_does_not_mark_dirty() {
+        let mock = MockDockerClient::default();
+        let mut app = App::with_client(mock);
+        app.dirty = false;
+
+        app.events.sender().send(Event::Tick).unwrap();
+        app.process_next_event().await.unwrap();
+
+        assert!(!app.dirty);
+    }
+
+    #[tokio::test]
+    async fn key_event_marks_dirty() {
+        let mock = MockDockerClient::default();
+        let mut app = App::with_client(mock);
+        app.dirty = false;
+
+        app.events
+            .sender()
+            .send(Event::Crossterm(KeyEvent::from(KeyCode::Right)))
+            .unwrap();
+        app.process_next_event().await.unwrap();
+
+        assert!(app.dirty);
+    }
+
+    #[tokio::test]
+    async fn resize_event_marks_dirty() {
+        let mock = MockDockerClient::default();
+        let mut app = App::with_client(mock);
+        app.dirty = false;
+
+        app.events.sender().send(Event::Resize).unwrap();
+        app.process_next_event().await.unwrap();
+
+        assert!(app.dirty);
+        assert!(app.running);
+    }
+
+    #[test]
+    fn unchanged_container_list_does_not_mark_dirty() {
+        let mock = MockDockerClient::default();
+        let mut app = App::with_client(mock);
+
+        app.apply_docker_outcome(DockerOutcome::ContainersListed(Ok(vec![
+            container_summary("a"),
+        ])));
+        app.dirty = false;
+
+        app.apply_docker_outcome(DockerOutcome::ContainersListed(Ok(vec![
+            container_summary("a"),
+        ])));
+        assert!(!app.dirty);
+
+        app.apply_docker_outcome(DockerOutcome::ContainersListed(Ok(vec![
+            container_summary("a"),
+            container_summary("b"),
+        ])));
+        assert!(app.dirty);
+    }
+
+    #[test]
+    fn list_error_marks_dirty_once() {
+        let mock = MockDockerClient::default();
+        let mut app = App::with_client(mock);
+
+        app.apply_docker_outcome(DockerOutcome::ContainersListed(Err(
+            DockerError::DaemonUnreachable {
+                details: "connection refused".to_string(),
+            },
+        )));
+        assert!(app.dirty);
+        app.dirty = false;
+
+        app.apply_docker_outcome(DockerOutcome::ContainersListed(Err(
+            DockerError::DaemonUnreachable {
+                details: "connection refused".to_string(),
+            },
+        )));
+        assert!(!app.dirty);
+    }
+
+    #[tokio::test]
+    async fn action_request_and_completion_mark_dirty() {
+        let mock = MockDockerClient::default();
+        let mut app = App::with_client(mock);
+        app.dirty = false;
+
+        app.request_stop_container("container-id".to_string());
+        assert!(app.dirty);
+        app.dirty = false;
+
+        app.apply_docker_outcome(DockerOutcome::ActionCompleted {
+            resource: ResourceKind::Containers,
+            result: Ok(()),
+        });
+        assert!(app.dirty);
+    }
+
+    #[tokio::test]
+    async fn container_info_refresh_with_identical_data_does_not_mark_dirty() {
+        let mock = MockDockerClient::default();
+        let mut app = App::with_client(mock);
+
+        app.request_container_details_open("container-id".to_string());
+        let inspect = ContainerInspectResponse {
+            id: Some("container-id".to_string()),
+            state: Some(bollard::secret::ContainerState {
+                status: Some(ContainerStateStatusEnum::RUNNING),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        app.apply_docker_outcome(DockerOutcome::ContainerInspected {
+            open_details: true,
+            result: Ok(Box::new(inspect.clone())),
+        });
+        assert!(app.container_info.is_some());
+        app.dirty = false;
+
+        app.apply_docker_outcome(DockerOutcome::ContainerInspected {
+            open_details: false,
+            result: Ok(Box::new(inspect.clone())),
+        });
+        assert!(!app.dirty);
+
+        let changed_inspect = ContainerInspectResponse {
+            state: Some(bollard::secret::ContainerState {
+                status: Some(ContainerStateStatusEnum::EXITED),
+                ..Default::default()
+            }),
+            ..inspect
+        };
+        app.apply_docker_outcome(DockerOutcome::ContainerInspected {
+            open_details: false,
+            result: Ok(Box::new(changed_inspect)),
+        });
+        assert!(app.dirty);
     }
 }

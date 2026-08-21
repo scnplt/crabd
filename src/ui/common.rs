@@ -6,7 +6,7 @@ use ratatui::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const REFRESH_AFTER_TICK: u8 = 10;
+const REFRESH_EVERY_TICKS: u8 = 2;
 
 #[derive(Default, Clone)]
 pub struct RefreshTicker {
@@ -14,14 +14,16 @@ pub struct RefreshTicker {
 }
 
 impl RefreshTicker {
-    /// Returns true once every `REFRESH_AFTER_TICK + 2` ticks, resetting the counter.
+    /// Returns true once every `REFRESH_EVERY_TICKS` ticks, resetting the counter.
+    /// At `TICK_FPS = 5.0` that is every 400 ms, matching the previous cadence of
+    /// every 12 ticks at 30 FPS.
     pub fn should_refresh(&mut self) -> bool {
-        if self.skipped_tick_count <= REFRESH_AFTER_TICK {
-            self.skipped_tick_count += 1;
-            false
-        } else {
+        self.skipped_tick_count += 1;
+        if self.skipped_tick_count >= REFRESH_EVERY_TICKS {
             self.skipped_tick_count = 0;
             true
+        } else {
+            false
         }
     }
 }
@@ -143,17 +145,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn refresh_ticker_fires_every_twelfth_tick() {
+    fn refresh_ticker_fires_every_second_tick() {
         let mut ticker = RefreshTicker::default();
 
-        for _ in 0..11 {
-            assert!(!ticker.should_refresh());
-        }
+        assert!(!ticker.should_refresh());
         assert!(ticker.should_refresh());
 
-        for _ in 0..11 {
-            assert!(!ticker.should_refresh());
-        }
+        assert!(!ticker.should_refresh());
         assert!(ticker.should_refresh());
     }
 
