@@ -23,6 +23,7 @@ pub struct ResourceTableInfo<RowType> {
     pub style: TableStyle,
     pub err: Option<String>,
     pub ticker: RefreshTicker,
+    pub pending_ops: usize,
     scrollbar_state: ScrollbarState,
     scroll: usize,
 }
@@ -36,6 +37,7 @@ impl<RowType> Default for ResourceTableInfo<RowType> {
             style: TableStyle::default(),
             err: None,
             ticker: RefreshTicker::default(),
+            pending_ops: 0,
             scrollbar_state: ScrollbarState::default(),
             scroll: 0,
         }
@@ -236,6 +238,10 @@ pub trait ResourceTable {
         let mut text = self.footer_text();
         let mut border = None;
 
+        if self.table_info().pending_ops > 0 {
+            text = format!(" [working]{text}");
+        }
+
         if let Some(err) = &self.table_info().err {
             border = Some(Style::new().red());
             text = err.clone();
@@ -289,6 +295,15 @@ pub trait ResourceTable {
 
     fn show_err(&mut self, err: &DockerError) {
         self.table_info_mut().err = Some(format!("[ERR] {err}"));
+    }
+
+    fn begin_pending_op(&mut self) {
+        self.table_info_mut().pending_ops += 1;
+    }
+
+    fn end_pending_op(&mut self) {
+        let info = self.table_info_mut();
+        info.pending_ops = info.pending_ops.saturating_sub(1);
     }
 }
 
@@ -483,6 +498,34 @@ mod tests {
         table.update_with_items(rows(&[("a", true), ("b", true)]));
         // Items were already non-empty before this update, so selection stays untouched.
         assert_eq!(table.info.state.selected(), None);
+    }
+
+    #[test]
+    fn footer_shows_working_prefix_while_an_op_is_pending() {
+        let mut table = TestTable::default();
+        table.begin_pending_op();
+
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| table.draw(f, f.area()).unwrap()).unwrap();
+
+        let buffer: &Buffer = terminal.backend().buffer();
+        let content: String = buffer.content.iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("[working]"));
+
+        table.info.err = Some("boom".to_string());
+        terminal.draw(|f| table.draw(f, f.area()).unwrap()).unwrap();
+        let buffer: &Buffer = terminal.backend().buffer();
+        let content: String = buffer.content.iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("boom"));
+        assert!(!content.contains("[working]"));
+    }
+
+    #[test]
+    fn end_pending_op_saturates_at_zero() {
+        let mut table = TestTable::default();
+        table.end_pending_op();
+        assert_eq!(table.info.pending_ops, 0);
     }
 
     #[test]
