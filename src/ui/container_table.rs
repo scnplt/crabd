@@ -102,7 +102,7 @@ impl ResourceTable for ContainerTable {
                 ('x', Some(id)) => KeyOutcome::Handled(Some(AppEvent::KillContainer(id))),
                 _ => KeyOutcome::Fallthrough,
             },
-            _ => KeyOutcome::Handled(None),
+            _ => KeyOutcome::Fallthrough,
         };
 
         Ok(outcome)
@@ -359,6 +359,42 @@ mod tests {
             KeyOutcome::Handled(Some(AppEvent::RemoveContainer(got))) => assert_eq!(got, id),
             _ => panic!("expected RemoveContainer"),
         }
+    }
+
+    #[test]
+    fn esc_and_arrow_keys_fall_through_to_shared_navigation() {
+        let mut table = ContainerTable::default();
+        let rows = ContainerTableRow::from_list(vec![
+            summary_with_ports("running-id", "running"),
+            summary_with_ports("other-id", "running"),
+        ]);
+        table.update_with_items(rows);
+        table.info.row_heights = vec![DEFAULT_ROW_HEIGHT, DEFAULT_ROW_HEIGHT];
+        table.select_row(0);
+
+        for code in [KeyCode::Esc, KeyCode::Up, KeyCode::Down] {
+            match table
+                .handle_resource_key_event(KeyEvent::from(code))
+                .unwrap()
+            {
+                KeyOutcome::Fallthrough => {}
+                _ => panic!("expected {code:?} to fall through to shared navigation"),
+            }
+        }
+
+        // End-to-end through the shared handler: Esc quits, arrows move the selection.
+        let event = table
+            .handle_key_event(KeyEvent::from(KeyCode::Esc))
+            .unwrap();
+        assert!(matches!(event, Some(AppEvent::Quit)));
+
+        table
+            .handle_key_event(KeyEvent::from(KeyCode::Down))
+            .unwrap();
+        assert_eq!(table.table_info().state.selected(), Some(1));
+
+        table.handle_key_event(KeyEvent::from(KeyCode::Up)).unwrap();
+        assert_eq!(table.table_info().state.selected(), Some(0));
     }
 
     #[test]
