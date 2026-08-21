@@ -9,7 +9,6 @@ use crate::{
     ui::resource_table::{KeyOutcome, ResourceRow, ResourceTable, ResourceTableInfo},
 };
 
-const REGEX_NETWORK_IN_USE: &str = r":(?:[^:]+:)?\s*([^\(]+)";
 const REGEX_NETWORK_CREATED_AT: &str = r"\.\d+";
 
 #[derive(Default)]
@@ -59,15 +58,6 @@ impl ResourceTable for NetworkTable {
         };
 
         Ok(outcome)
-    }
-
-    fn error_message(&self, raw: &str) -> String {
-        Regex::new(REGEX_NETWORK_IN_USE)
-            .ok()
-            .and_then(|re| re.captures(raw))
-            .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str().to_string())
-            .unwrap_or_else(|| "Something went wrong...".to_string())
     }
 }
 
@@ -127,22 +117,6 @@ mod tests {
         let names: Vec<String> = rows.iter().map(|r| r.name.clone()).collect();
 
         assert_eq!(names, vec!["alpha", "bravo", "charlie"]);
-    }
-
-    #[test]
-    fn error_message_captures_daemon_in_use_segment() {
-        let table = NetworkTable::default();
-        let raw = "Error response from daemon: error while removing network: network foo id \
-            abc123def456 has active endpoints";
-        assert_eq!(
-            table.error_message(raw),
-            "network foo id abc123def456 has active endpoints"
-        );
-
-        assert_eq!(
-            table.error_message("no colons here"),
-            "Something went wrong..."
-        );
     }
 
     #[test]

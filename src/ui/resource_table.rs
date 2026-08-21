@@ -9,6 +9,7 @@ use ratatui::{
 };
 
 use crate::{
+    docker::error::DockerError,
     event::AppEvent,
     ui::common::{RefreshTicker, TableStyle, render_scrollbar},
 };
@@ -83,7 +84,6 @@ pub trait ResourceTable {
 
     fn refresh_event(&self) -> AppEvent;
     fn handle_resource_key_event(&mut self, key_event: KeyEvent) -> Result<KeyOutcome>;
-    fn error_message(&self, raw: &str) -> String;
 
     /// Whether the row is currently visible (rendered/navigable). Default: all rows visible.
     #[allow(unused_variables)]
@@ -287,9 +287,8 @@ pub trait ResourceTable {
         }
     }
 
-    fn show_err(&mut self, raw: String) {
-        let msg = self.error_message(&raw);
-        self.table_info_mut().err = Some(format!("[ERR] {}", msg.trim()));
+    fn show_err(&mut self, err: &DockerError) {
+        self.table_info_mut().err = Some(format!("[ERR] {err}"));
     }
 }
 
@@ -349,10 +348,6 @@ mod tests {
                 KeyCode::Char('h') => Ok(KeyOutcome::Handled(None)),
                 _ => Ok(KeyOutcome::Fallthrough),
             }
-        }
-
-        fn error_message(&self, raw: &str) -> String {
-            raw.to_string()
         }
 
         fn is_row_visible(&self, row: &Self::RowType) -> bool {
@@ -426,6 +421,20 @@ mod tests {
             .unwrap();
         assert!(result.is_none());
         assert!(table.info.err.is_none());
+    }
+
+    #[test]
+    fn show_err_formats_typed_error_into_footer() {
+        let mut table = TestTable::default();
+
+        table.show_err(&DockerError::Conflict {
+            message: "network foo has active endpoints".into(),
+        });
+
+        assert_eq!(
+            table.info.err,
+            Some("[ERR] Conflict: network foo has active endpoints".to_string())
+        );
     }
 
     #[test]

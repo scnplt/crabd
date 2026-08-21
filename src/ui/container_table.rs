@@ -106,14 +106,6 @@ impl ResourceTable for ContainerTable {
 
         Ok(outcome)
     }
-
-    fn error_message(&self, raw: &str) -> String {
-        raw.split(":")
-            .collect::<Vec<&str>>()
-            .get(2)
-            .map_or("Something went wrong...", |v| v)
-            .to_string()
-    }
 }
 
 impl ResourceRow for ContainerTableRow {
@@ -276,13 +268,6 @@ mod tests {
         let text = get_footer_text(false, Some(false));
         assert!(text.contains("<R> start"));
         assert!(text.contains("<T> Running"));
-    }
-
-    #[test]
-    fn error_message_extracts_third_colon_segment() {
-        let table = ContainerTable::default();
-        assert_eq!(table.error_message("a:b:message"), "message");
-        assert_eq!(table.error_message("a:b"), "Something went wrong...");
     }
 
     fn summary_with_ports(id: &str, state: &str) -> ContainerSummary {

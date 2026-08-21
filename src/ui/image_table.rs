@@ -2,7 +2,6 @@ use bollard::secret::ImageSummary;
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Constraint;
-use regex::Regex;
 
 use crate::{
     event::AppEvent,
@@ -13,9 +12,6 @@ use crate::{
         },
     },
 };
-
-const REGEX_DELETE_IMG_ERR: &str =
-    r"\((?:cannot|must) be forced\) - image is being used by (?:running|stopped) container \w+";
 
 #[derive(Default)]
 pub struct ImageTable {
@@ -69,15 +65,6 @@ impl ResourceTable for ImageTable {
         };
 
         Ok(outcome)
-    }
-
-    fn error_message(&self, raw: &str) -> String {
-        Regex::new(REGEX_DELETE_IMG_ERR)
-            .ok()
-            .and_then(|re| re.find(raw))
-            .map(|m| m.as_str())
-            .unwrap_or("Something went wrong...")
-            .to_string()
     }
 }
 
@@ -139,30 +126,6 @@ mod tests {
         let ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
 
         assert_eq!(ids, vec!["b", "c", "a"]);
-    }
-
-    #[test]
-    fn error_message_matches_realistic_daemon_strings() {
-        let table = ImageTable::default();
-
-        let stopped_msg = "Error response from daemon: conflict: unable to delete abc123def456 \
-            (must be forced) - image is being used by stopped container abc123";
-        assert_eq!(
-            table.error_message(stopped_msg),
-            "(must be forced) - image is being used by stopped container abc123"
-        );
-
-        let running_msg = "Error response from daemon: conflict: unable to delete xyz789 \
-            (cannot be forced) - image is being used by running container xyz";
-        assert_eq!(
-            table.error_message(running_msg),
-            "(cannot be forced) - image is being used by running container xyz"
-        );
-
-        assert_eq!(
-            table.error_message("some unrelated error"),
-            "Something went wrong..."
-        );
     }
 
     #[test]

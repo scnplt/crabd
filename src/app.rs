@@ -1,4 +1,5 @@
 use crate::docker::client::{DockerApi, DockerClient};
+use crate::docker::error::{DockerError, DockerResult};
 use crate::event::{AppEvent, Event, EventHandler};
 use crate::ui::container_info_block::{ContainerData, ContainerInfoBlock};
 use crate::ui::container_table::{ContainerTable, ContainerTableRow};
@@ -69,7 +70,7 @@ impl<C: DockerApi> App<C> {
     }
 
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
-        self.update_containers().await?;
+        self.update_containers().await;
 
         while self.running {
             terminal.draw(|frame| self.draw(frame, frame.area()))?;
@@ -133,19 +134,19 @@ impl<C: DockerApi> App<C> {
             }
             Event::App(app_event) => match app_event {
                 AppEvent::Quit => self.quit(),
-                AppEvent::UpdateContainers => self.update_containers().await?,
-                AppEvent::UpdateContainerInfo(id) => self.update_container_details(id).await?,
-                AppEvent::RestartContainer(id) => self.restart_container(id).await?,
-                AppEvent::StopContainer(id) => self.docker_client.stop_container(&id).await?,
-                AppEvent::KillContainer(id) => self.docker_client.kill_container(&id).await?,
-                AppEvent::RemoveContainer(id) => self.remove_container(id).await?,
-                AppEvent::GoToContainerDetails(id) => self.go_to_container_info(id).await?,
-                AppEvent::UpdateVolumes => self.update_volumes().await?,
-                AppEvent::RemoveVolume(name, force) => self.remove_volume(name, force).await?,
-                AppEvent::UpdateNetworks => self.update_networks().await?,
-                AppEvent::RemoveNetwork(name) => self.remove_network(name).await?,
-                AppEvent::UpdateImages => self.update_images().await?,
-                AppEvent::RemoveImage(id, force) => self.remove_image(id, force).await?,
+                AppEvent::UpdateContainers => self.update_containers().await,
+                AppEvent::UpdateContainerInfo(id) => self.update_container_details(id).await,
+                AppEvent::RestartContainer(id) => self.restart_container(id).await,
+                AppEvent::StopContainer(id) => self.stop_container(id).await,
+                AppEvent::KillContainer(id) => self.kill_container(id).await,
+                AppEvent::RemoveContainer(id) => self.remove_container(id).await,
+                AppEvent::GoToContainerDetails(id) => self.go_to_container_info(id).await,
+                AppEvent::UpdateVolumes => self.update_volumes().await,
+                AppEvent::RemoveVolume(name, force) => self.remove_volume(name, force).await,
+                AppEvent::UpdateNetworks => self.update_networks().await,
+                AppEvent::RemoveNetwork(name) => self.remove_network(name).await,
+                AppEvent::UpdateImages => self.update_images().await,
+                AppEvent::RemoveImage(id, force) => self.remove_image(id, force).await,
                 AppEvent::Back => self.container_info = None,
             },
         }
@@ -189,13 +190,12 @@ impl<C: DockerApi> App<C> {
         self.selected_tab = self.selected_tab.previous()
     }
 
-    async fn go_to_container_info(&mut self, container_id: String) -> Result<()> {
+    async fn go_to_container_info(&mut self, container_id: String) {
         if let Some(data) = self.get_container_data(container_id).await {
             let mut container_info_block = ContainerInfoBlock::default();
             container_info_block.update_data(data);
             self.container_info = Some(Box::new(container_info_block));
         }
-        Ok(())
     }
 
     fn tick(&mut self) -> Result<Option<AppEvent>> {
@@ -217,87 +217,108 @@ impl<C: DockerApi> App<C> {
         self.running = false;
     }
 
-    async fn get_container_data(&self, container_id: String) -> Option<ContainerData> {
-        if let Ok(data) = self.docker_client.inspect_container(&container_id).await {
-            return Some(ContainerData::from(data));
+    fn report_err(&mut self, tab: SelectedTab, err: &DockerError) {
+        match tab {
+            SelectedTab::Containers => self.container_table.show_err(err),
+            SelectedTab::Volumes => self.volume_table.show_err(err),
+            SelectedTab::Networks => self.network_table.show_err(err),
+            SelectedTab::Images => self.image_table.show_err(err),
         }
-        None
     }
 
-    async fn update_container_details(&mut self, container_id: String) -> Result<()> {
-        if let Some(data) = self.get_container_data(container_id).await
-            && let Some(info_block) = self.container_info.as_mut()
-        {
+    /// Unwraps a Docker result, reporting failures into `tab`'s footer.
+    fn ok_or_report<T>(&mut self, tab: SelectedTab, result: DockerResult<T>) -> Option<T> {
+        match result {
+            Ok(value) => Some(value),
+            Err(err) => {
+                self.report_err(tab, &err);
+                None
+            }
+        }
+    }
+
+    async fn get_container_data(&mut self, container_id: String) -> Option<ContainerData> {
+        let result = self.docker_client.inspect_container(&container_id).await;
+        self.ok_or_report(SelectedTab::Containers, result)
+            .map(ContainerData::from)
+    }
+
+    async fn update_container_details(&mut self, container_id: String) {
+        let Some(data) = self.get_container_data(container_id).await else {
+            return;
+        };
+        if let Some(info_block) = self.container_info.as_mut() {
             info_block.update_data(data);
         }
-        Ok(())
     }
 
-    async fn restart_container(&mut self, container_id: String) -> Result<()> {
-        if let Err(e) = self.docker_client.restart_container(&container_id).await {
-            self.container_table.show_err(e.to_string());
-        }
-        Ok(())
+    async fn restart_container(&mut self, container_id: String) {
+        let result = self.docker_client.restart_container(&container_id).await;
+        self.ok_or_report(SelectedTab::Containers, result);
     }
 
-    async fn remove_container(&mut self, container_id: String) -> Result<()> {
-        if let Err(e) = self.docker_client.remove_container(&container_id).await {
-            self.container_table.show_err(e.to_string());
-        }
-        Ok(())
+    async fn stop_container(&mut self, container_id: String) {
+        let result = self.docker_client.stop_container(&container_id).await;
+        self.ok_or_report(SelectedTab::Containers, result);
     }
 
-    async fn update_containers(&mut self) -> Result<()> {
-        if let Ok(result) = self.docker_client.list_containers().await {
+    async fn kill_container(&mut self, container_id: String) {
+        let result = self.docker_client.kill_container(&container_id).await;
+        self.ok_or_report(SelectedTab::Containers, result);
+    }
+
+    async fn remove_container(&mut self, container_id: String) {
+        let result = self.docker_client.remove_container(&container_id).await;
+        self.ok_or_report(SelectedTab::Containers, result);
+    }
+
+    async fn update_containers(&mut self) {
+        let result = self.docker_client.list_containers().await;
+        if let Some(result) = self.ok_or_report(SelectedTab::Containers, result) {
             let containers = ContainerTableRow::from_list(result);
             self.container_table.update_with_items(containers);
         }
-        Ok(())
     }
 
-    async fn update_volumes(&mut self) -> Result<()> {
-        if let Some(result) = self.docker_client.list_volumes().await?.volumes {
-            let volumes = VolumeTableRow::from_list(result);
+    async fn update_volumes(&mut self) {
+        let result = self.docker_client.list_volumes().await;
+        if let Some(response) = self.ok_or_report(SelectedTab::Volumes, result)
+            && let Some(volumes) = response.volumes
+        {
+            let volumes = VolumeTableRow::from_list(volumes);
             self.volume_table.update_with_items(volumes);
         }
-        Ok(())
     }
 
-    async fn update_networks(&mut self) -> Result<()> {
-        if let Ok(result) = self.docker_client.list_networks().await {
+    async fn update_networks(&mut self) {
+        let result = self.docker_client.list_networks().await;
+        if let Some(result) = self.ok_or_report(SelectedTab::Networks, result) {
             let networks = NetworkTableRow::from_list(result);
             self.network_table.update_with_items(networks);
         }
-        Ok(())
     }
 
-    async fn update_images(&mut self) -> Result<()> {
-        if let Ok(result) = self.docker_client.list_images().await {
+    async fn update_images(&mut self) {
+        let result = self.docker_client.list_images().await;
+        if let Some(result) = self.ok_or_report(SelectedTab::Images, result) {
             let images = ImageTableRow::from_list(result);
             self.image_table.update_with_items(images);
         }
-        Ok(())
     }
 
-    async fn remove_volume(&mut self, name: String, force: bool) -> Result<()> {
-        if let Err(e) = self.docker_client.remove_volume(&name, force).await {
-            self.volume_table.show_err(e.to_string());
-        }
-        Ok(())
+    async fn remove_volume(&mut self, name: String, force: bool) {
+        let result = self.docker_client.remove_volume(&name, force).await;
+        self.ok_or_report(SelectedTab::Volumes, result);
     }
 
-    async fn remove_network(&mut self, name: String) -> Result<()> {
-        if let Err(e) = self.docker_client.remove_network(&name).await {
-            self.network_table.show_err(e.to_string());
-        }
-        Ok(())
+    async fn remove_network(&mut self, name: String) {
+        let result = self.docker_client.remove_network(&name).await;
+        self.ok_or_report(SelectedTab::Networks, result);
     }
 
-    async fn remove_image(&mut self, id: String, force: bool) -> Result<()> {
-        if let Err(e) = self.docker_client.remove_image(&id, force).await {
-            self.image_table.show_err(e.to_string());
-        }
-        Ok(())
+    async fn remove_image(&mut self, id: String, force: bool) {
+        let result = self.docker_client.remove_image(&id, force).await;
+        self.ok_or_report(SelectedTab::Images, result);
     }
 }
 
@@ -350,7 +371,6 @@ mod tests {
         ContainerInspectResponse, ContainerSummary, ImageSummary, Network, Volume,
         VolumeListResponse,
     };
-    use color_eyre::eyre::eyre;
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::sync::Mutex;
 
@@ -361,7 +381,7 @@ mod tests {
         networks: Vec<Network>,
         images: Vec<ImageSummary>,
         inspect: Option<ContainerInspectResponse>,
-        fail_with: Option<String>,
+        fail_with: Option<DockerError>,
         calls: Mutex<Vec<String>>,
     }
 
@@ -372,88 +392,106 @@ mod tests {
     }
 
     impl DockerApi for MockDockerClient {
-        async fn list_containers(&self) -> Result<Vec<ContainerSummary>> {
+        async fn list_containers(&self) -> DockerResult<Vec<ContainerSummary>> {
             self.record("list_containers");
+            if let Some(e) = &self.fail_with {
+                return Err(e.clone());
+            }
             Ok(self.containers.clone())
         }
 
-        async fn stop_container(&self, container_id: &str) -> Result<()> {
+        async fn stop_container(&self, container_id: &str) -> DockerResult<()> {
             self.record(format!("stop_container:{container_id}"));
             match &self.fail_with {
-                Some(msg) => Err(eyre!(msg.clone())),
+                Some(e) => Err(e.clone()),
                 None => Ok(()),
             }
         }
 
-        async fn restart_container(&self, container_id: &str) -> Result<()> {
+        async fn restart_container(&self, container_id: &str) -> DockerResult<()> {
             self.record(format!("restart_container:{container_id}"));
             match &self.fail_with {
-                Some(msg) => Err(eyre!(msg.clone())),
+                Some(e) => Err(e.clone()),
                 None => Ok(()),
             }
         }
 
-        async fn kill_container(&self, container_id: &str) -> Result<()> {
+        async fn kill_container(&self, container_id: &str) -> DockerResult<()> {
             self.record(format!("kill_container:{container_id}"));
             match &self.fail_with {
-                Some(msg) => Err(eyre!(msg.clone())),
+                Some(e) => Err(e.clone()),
                 None => Ok(()),
             }
         }
 
-        async fn remove_container(&self, container_id: &str) -> Result<()> {
+        async fn remove_container(&self, container_id: &str) -> DockerResult<()> {
             self.record(format!("remove_container:{container_id}"));
             match &self.fail_with {
-                Some(msg) => Err(eyre!(msg.clone())),
+                Some(e) => Err(e.clone()),
                 None => Ok(()),
             }
         }
 
-        async fn inspect_container(&self, container_id: &str) -> Result<ContainerInspectResponse> {
+        async fn inspect_container(
+            &self,
+            container_id: &str,
+        ) -> DockerResult<ContainerInspectResponse> {
             self.record(format!("inspect_container:{container_id}"));
-            self.inspect
-                .clone()
-                .ok_or_else(|| eyre!("no inspect data configured"))
+            if let Some(e) = &self.fail_with {
+                return Err(e.clone());
+            }
+            self.inspect.clone().ok_or_else(|| DockerError::Other {
+                message: "no inspect data configured".to_string(),
+            })
         }
 
-        async fn list_volumes(&self) -> Result<VolumeListResponse> {
+        async fn list_volumes(&self) -> DockerResult<VolumeListResponse> {
             self.record("list_volumes");
+            if let Some(e) = &self.fail_with {
+                return Err(e.clone());
+            }
             Ok(VolumeListResponse {
                 volumes: Some(self.volumes.clone()),
                 ..Default::default()
             })
         }
 
-        async fn remove_volume(&self, name: &str, force: bool) -> Result<()> {
+        async fn remove_volume(&self, name: &str, force: bool) -> DockerResult<()> {
             self.record(format!("remove_volume:{name}:{force}"));
             match &self.fail_with {
-                Some(msg) => Err(eyre!(msg.clone())),
+                Some(e) => Err(e.clone()),
                 None => Ok(()),
             }
         }
 
-        async fn list_networks(&self) -> Result<Vec<Network>> {
+        async fn list_networks(&self) -> DockerResult<Vec<Network>> {
             self.record("list_networks");
+            if let Some(e) = &self.fail_with {
+                return Err(e.clone());
+            }
             Ok(self.networks.clone())
         }
 
-        async fn remove_network(&self, name: &str) -> Result<()> {
+        async fn remove_network(&self, name: &str) -> DockerResult<()> {
             self.record(format!("remove_network:{name}"));
             match &self.fail_with {
-                Some(msg) => Err(eyre!(msg.clone())),
+                Some(e) => Err(e.clone()),
                 None => Ok(()),
             }
         }
 
-        async fn list_images(&self) -> Result<Vec<ImageSummary>> {
+        async fn list_images(&self) -> DockerResult<Vec<ImageSummary>> {
             self.record("list_images");
+            if let Some(e) = &self.fail_with {
+                return Err(e.clone());
+            }
             Ok(self.images.clone())
         }
 
-        async fn remove_image(&self, id: &str, force: bool) -> Result<()> {
+        async fn remove_image(&self, id: &str, force: bool) -> DockerResult<()> {
             self.record(format!("remove_image:{id}:{force}"));
             match &self.fail_with {
-                Some(msg) => Err(eyre!(msg.clone())),
+                Some(e) => Err(e.clone()),
                 None => Ok(()),
             }
         }
@@ -500,7 +538,7 @@ mod tests {
         };
         let mut app = App::with_client(mock);
 
-        app.update_containers().await.unwrap();
+        app.update_containers().await;
 
         assert_eq!(app.container_table.table_info().items.len(), 2);
     }
@@ -513,7 +551,7 @@ mod tests {
         };
         let mut app = App::with_client(mock);
 
-        app.update_volumes().await.unwrap();
+        app.update_volumes().await;
 
         assert_eq!(app.volume_table.table_info().items.len(), 2);
     }
@@ -526,7 +564,7 @@ mod tests {
         };
         let mut app = App::with_client(mock);
 
-        app.update_networks().await.unwrap();
+        app.update_networks().await;
 
         assert_eq!(app.network_table.table_info().items.len(), 2);
     }
@@ -542,7 +580,7 @@ mod tests {
         };
         let mut app = App::with_client(mock);
 
-        app.update_images().await.unwrap();
+        app.update_images().await;
 
         assert_eq!(app.image_table.table_info().items.len(), 2);
     }
@@ -550,52 +588,130 @@ mod tests {
     #[tokio::test]
     async fn restart_container_error_is_shown_in_footer() {
         let mock = MockDockerClient {
-            fail_with: Some("a:b:daemon says no".to_string()),
+            fail_with: Some(DockerError::Conflict {
+                message: "daemon says no".to_string(),
+            }),
             ..Default::default()
         };
         let mut app = App::with_client(mock);
 
-        app.restart_container("container-id".to_string())
-            .await
-            .unwrap();
+        app.restart_container("container-id".to_string()).await;
 
         let err = app.container_table.table_info().err.clone().unwrap();
-        assert!(err.starts_with("[ERR] "));
-        assert!(err.contains("daemon says no"));
+        assert_eq!(err, "[ERR] Conflict: daemon says no");
+    }
+
+    #[tokio::test]
+    async fn stop_container_error_is_shown_in_footer() {
+        let mock = MockDockerClient {
+            fail_with: Some(DockerError::Conflict {
+                message: "daemon says no".to_string(),
+            }),
+            ..Default::default()
+        };
+        let mut app = App::with_client(mock);
+
+        app.stop_container("container-id".to_string()).await;
+
+        let err = app.container_table.table_info().err.clone().unwrap();
+        assert_eq!(err, "[ERR] Conflict: daemon says no");
+    }
+
+    #[tokio::test]
+    async fn kill_container_error_is_shown_in_footer() {
+        let mock = MockDockerClient {
+            fail_with: Some(DockerError::Conflict {
+                message: "daemon says no".to_string(),
+            }),
+            ..Default::default()
+        };
+        let mut app = App::with_client(mock);
+
+        app.kill_container("container-id".to_string()).await;
+
+        let err = app.container_table.table_info().err.clone().unwrap();
+        assert_eq!(err, "[ERR] Conflict: daemon says no");
     }
 
     #[tokio::test]
     async fn remove_volume_error_is_shown_in_footer() {
         let mock = MockDockerClient {
-            fail_with: Some("volume is in use by container [abc123def456]".to_string()),
+            fail_with: Some(DockerError::Conflict {
+                message: "volume is in use".to_string(),
+            }),
             ..Default::default()
         };
         let mut app = App::with_client(mock);
 
-        app.remove_volume("volume-name".to_string(), false)
-            .await
-            .unwrap();
+        app.remove_volume("volume-name".to_string(), false).await;
 
         let err = app.volume_table.table_info().err.clone().unwrap();
-        assert!(err.starts_with("[ERR] "));
-        assert!(err.contains("Volume is in use by container: abc123def456"));
+        assert_eq!(err, "[ERR] Conflict: volume is in use");
     }
 
     #[tokio::test]
     async fn remove_network_error_is_shown_in_footer() {
         let mock = MockDockerClient {
-            fail_with: Some("a:b:daemon says no".to_string()),
+            fail_with: Some(DockerError::Conflict {
+                message: "daemon says no".to_string(),
+            }),
             ..Default::default()
         };
         let mut app = App::with_client(mock);
 
-        app.remove_network("network-name".to_string())
-            .await
-            .unwrap();
+        app.remove_network("network-name".to_string()).await;
 
         let err = app.network_table.table_info().err.clone().unwrap();
-        assert!(err.starts_with("[ERR] "));
-        assert!(err.contains("daemon says no"));
+        assert_eq!(err, "[ERR] Conflict: daemon says no");
+    }
+
+    #[tokio::test]
+    async fn remove_image_error_is_shown_in_footer() {
+        let mock = MockDockerClient {
+            fail_with: Some(DockerError::Conflict {
+                message: "daemon says no".to_string(),
+            }),
+            ..Default::default()
+        };
+        let mut app = App::with_client(mock);
+
+        app.remove_image("image-id".to_string(), false).await;
+
+        let err = app.image_table.table_info().err.clone().unwrap();
+        assert_eq!(err, "[ERR] Conflict: daemon says no");
+    }
+
+    #[tokio::test]
+    async fn list_failure_shows_error_on_owning_tab() {
+        let mock = MockDockerClient {
+            fail_with: Some(DockerError::DaemonUnreachable {
+                details: "connection refused".to_string(),
+            }),
+            ..Default::default()
+        };
+        let mut app = App::with_client(mock);
+        assert_eq!(app.selected_tab as usize, SelectedTab::Containers as usize);
+
+        app.update_images().await;
+
+        assert!(app.image_table.table_info().err.is_some());
+        assert!(app.container_table.table_info().err.is_none());
+    }
+
+    #[tokio::test]
+    async fn list_failure_keeps_previous_items() {
+        let mock = MockDockerClient {
+            fail_with: Some(DockerError::DaemonUnreachable {
+                details: "connection refused".to_string(),
+            }),
+            ..Default::default()
+        };
+        let mut app = App::with_client(mock);
+
+        app.update_containers().await;
+
+        assert_eq!(app.container_table.table_info().items.len(), 0);
+        assert!(app.container_table.table_info().err.is_some());
     }
 
     #[tokio::test]
@@ -609,9 +725,7 @@ mod tests {
         };
         let mut app = App::with_client(mock);
 
-        app.go_to_container_info("container-id".to_string())
-            .await
-            .unwrap();
+        app.go_to_container_info("container-id".to_string()).await;
         assert!(app.container_info.is_some());
 
         let event = app.handle_key_event(KeyEvent::from(KeyCode::Esc)).unwrap();
@@ -629,9 +743,7 @@ mod tests {
         };
         let mut app = App::with_client(mock);
 
-        app.go_to_container_info("container-id".to_string())
-            .await
-            .unwrap();
+        app.go_to_container_info("container-id".to_string()).await;
 
         let tab_before = app.selected_tab as usize;
         app.handle_key_event(KeyEvent::from(KeyCode::Char('t')))

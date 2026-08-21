@@ -24,4 +24,5 @@ ratatui = "0.30.0"
 regex = "1.11.1"
 strum = "0.27.1"
 strum_macros = "0.27.1"
+thiserror = "2.0"
 tokio = {version = "1.44.2", features = ["full"]}
