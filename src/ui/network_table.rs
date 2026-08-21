@@ -1,36 +1,22 @@
-use super::common::TableStyle;
-use super::common::render_footer;
-use crate::event::AppEvent;
-use crate::ui::resource_table::ResourceTable;
-use crate::ui::resource_table::ResourceTableInfo;
 use bollard::secret::Network;
 use color_eyre::eyre::Result;
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::style::Stylize;
-use ratatui::{
-    Frame,
-    layout::{Constraint, Rect},
-    style::Style,
-    text::Text,
-    widgets::{Cell, HighlightSpacing, Row, Table},
-};
+use ratatui::layout::Constraint;
 use regex::Regex;
 
-const ROW_HEIGHT: usize = 3;
-const REFRESH_AFTER_TICK: u8 = 10;
-const REGEX_NETWORK_IN_USE: &str = r":(?:[^:]+:)?\s*([^\(]+)";
+use crate::{
+    event::AppEvent,
+    ui::resource_table::{KeyOutcome, ResourceRow, ResourceTable, ResourceTableInfo},
+};
+
 const REGEX_NETWORK_CREATED_AT: &str = r"\.\d+";
-const DEFAULT_FOOTER: &str = " <Del/D> remove";
 
 #[derive(Default)]
 pub struct NetworkTable {
-    style: TableStyle,
-    skipped_tick_count_for_refresh: u8,
     info: ResourceTableInfo<NetworkTableRow>,
-    err: Option<String>,
 }
 
-#[derive(Default)]
+#[derive(Default, PartialEq)]
 pub struct NetworkTableRow {
     id: String,
     name: String,
@@ -41,116 +27,44 @@ pub struct NetworkTableRow {
 impl ResourceTable for NetworkTable {
     type RowType = NetworkTableRow;
 
-    fn get_table_info(&mut self) -> &mut ResourceTableInfo<Self::RowType> {
+    const HEADERS: &'static [&'static str] = &["ID", "Name", "Driver", "Created At"];
+    const WIDTHS: &'static [Constraint] = &[
+        Constraint::Length(15),
+        Constraint::Min(15),
+        Constraint::Min(0),
+        Constraint::Length(27),
+    ];
+    const DEFAULT_FOOTER: &'static str = " <Del/D> remove";
+
+    fn table_info(&self) -> &ResourceTableInfo<Self::RowType> {
+        &self.info
+    }
+
+    fn table_info_mut(&mut self) -> &mut ResourceTableInfo<Self::RowType> {
         &mut self.info
     }
 
-    fn render_table(&mut self, frame: &mut Frame, area: Rect) {
-        let header = ["ID", "Name", "Driver", "Created At"].into_iter()
-            .map(Cell::from)
-            .collect::<Row>()
-            .style(self.style.header_style)
-            .height(1);
-
-        self.info.row_heights.clear();
-
-        let rows = self.info.items.iter().enumerate().map(|(index, network)| {
-            let row_style = if index % 2 == 0 { self.style.row_style} else { self.style.alt_row_style };
-            let item = network.ref_array();
-
-            if index < self.info.items.len() - 1 {
-                self.info.row_heights.push(ROW_HEIGHT);
-            }
-
-            item.into_iter()
-                .map(|content| Cell::from(Text::from(format!("\n{content}\n"))))
-                .collect::<Row>()
-                .style(row_style)
-                .height(ROW_HEIGHT as u16)
-        });
-
-        let widths = vec![
-            Constraint::Length(15),
-            Constraint::Min(15),
-            Constraint::Min(0),
-            Constraint::Length(27),
-        ];
-
-        let table = Table::new(rows, widths)
-            .header(header)
-            .row_highlight_style(self.style.selected_row_style)
-            .highlight_symbol(Text::from(vec!["".into(), " ● ".into()]))
-            .highlight_spacing(HighlightSpacing::Always);
-
-        frame.render_stateful_widget(table, area, &mut self.info.state);
+    fn refresh_event(&self) -> AppEvent {
+        AppEvent::UpdateNetworks
     }
 
-    fn render_footer(&mut self, frame: &mut Frame, area: Rect) {
-        let mut border_style = None;
-        let mut footer_text = DEFAULT_FOOTER.to_string();
-
-        if let Some(err) = &self.err {
-            border_style = Some(Style::new().red());
-            footer_text = err.clone();
-        }
-
-        render_footer(frame, area, footer_text, border_style);
-    }
-}
-
-impl NetworkTable {
-    pub fn handle_key_event(&mut self, key_event: KeyEvent) -> Result<Option<AppEvent>> {
-        if self.err.is_some() {
-            self.err = None;
-            return Ok(None);
-        }
-
-        let event = match key_event.code {
-            KeyCode::Delete | KeyCode::Char('d') => self.get_selected_row()
-                .map(|n| AppEvent::RemoveNetwork(n.name.clone())),
-            _ => self.handle_nav_key_event(key_event)?,
+    fn handle_resource_key_event(&mut self, key_event: KeyEvent) -> Result<KeyOutcome> {
+        let outcome = match key_event.code {
+            KeyCode::Delete | KeyCode::Char('d') => KeyOutcome::Handled(
+                self.selected_row()
+                    .map(|n| AppEvent::RemoveNetwork(n.name.clone())),
+            ),
+            _ => KeyOutcome::Fallthrough,
         };
 
-        Ok(event)
-    }
-
-    pub fn draw(&mut self, frame: &mut Frame, area: Rect) -> Result<()> {
-        self.draw_default(frame, area)
-    }
-
-    pub fn tick(&mut self) -> Result<Option<AppEvent>> {
-        if self.skipped_tick_count_for_refresh <= REFRESH_AFTER_TICK {
-            self.skipped_tick_count_for_refresh += 1;
-            return Ok(None);
-        }
-
-        self.skipped_tick_count_for_refresh = 0;
-        Ok(Some(AppEvent::UpdateNetworks))
-    }
-
-    pub fn show_remove_network_err(&mut self, err: String) {
-        let err_msg = Regex::new(REGEX_NETWORK_IN_USE).ok()
-            .and_then(|re| re.captures(&err))
-            .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str().to_string())
-            .unwrap_or_else(|| "Something went wrong...".to_string());
-
-        self.err = Some(format!("[ERR] {}", err_msg.trim()))
+        Ok(outcome)
     }
 }
 
-impl NetworkTableRow {
-    const fn ref_array(&self) -> [&String; 4] {
-        [&self.id, &self.name, &self.driver, &self.created_at]
-    }
+impl ResourceRow for NetworkTableRow {
+    type Source = Network;
 
-    pub fn from_list(networks: Vec<Network>) -> Vec<Self> {
-        let mut result = networks.iter().map(Self::from).collect::<Vec<Self>>();
-        result.sort_by_key(|n| n.name.clone());
-        result
-    }
-
-    fn from(network: &Network) -> Self {
+    fn from_source(network: &Self::Source) -> Self {
         let id = format!("{}...", &network.id.as_deref().unwrap_or("-")[..12]);
 
         let raw_created = network.created.as_deref().unwrap_or_default();
@@ -163,5 +77,92 @@ impl NetworkTableRow {
             driver: network.driver.as_deref().unwrap_or("-").to_string(),
             created_at,
         }
+    }
+
+    fn cells(&self) -> Vec<String> {
+        vec![
+            self.id.clone(),
+            self.name.clone(),
+            self.driver.clone(),
+            self.created_at.clone(),
+        ]
+    }
+
+    fn sort_rows(rows: &mut Vec<Self>) {
+        rows.sort_by_key(|n| n.name.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn network(id: &str, name: &str) -> Network {
+        Network {
+            id: Some(id.to_string()),
+            name: Some(name.to_string()),
+            driver: Some("bridge".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn from_list_sorts_by_name() {
+        let networks = vec![
+            network("111111111111", "charlie"),
+            network("222222222222", "alpha"),
+            network("333333333333", "bravo"),
+        ];
+        let rows = NetworkTableRow::from_list(networks);
+        let names: Vec<String> = rows.iter().map(|r| r.name.clone()).collect();
+
+        assert_eq!(names, vec!["alpha", "bravo", "charlie"]);
+    }
+
+    #[test]
+    fn from_source_strips_fractional_seconds_and_truncates_id() {
+        let mut net = network("abcdef012345extra", "my-net");
+        net.created = Some("2024-01-02T03:04:05.123456789Z".to_string());
+
+        let row = NetworkTableRow::from_source(&net);
+        assert_eq!(row.created_at, "2024-01-02T03:04:05Z");
+        assert_eq!(row.id, "abcdef012345...");
+    }
+
+    #[test]
+    fn handle_resource_key_event_dispatches_remove_network() {
+        let mut table = NetworkTable::default();
+        table.update_with_items(NetworkTableRow::from_list(vec![network(
+            "111111111111",
+            "my-net",
+        )]));
+        table.select_row(0);
+
+        match table
+            .handle_resource_key_event(KeyEvent::from(KeyCode::Delete))
+            .unwrap()
+        {
+            KeyOutcome::Handled(Some(AppEvent::RemoveNetwork(name))) => {
+                assert_eq!(name, "my-net")
+            }
+            _ => panic!("expected RemoveNetwork via Delete"),
+        }
+
+        match table
+            .handle_resource_key_event(KeyEvent::from(KeyCode::Char('d')))
+            .unwrap()
+        {
+            KeyOutcome::Handled(Some(AppEvent::RemoveNetwork(name))) => {
+                assert_eq!(name, "my-net")
+            }
+            _ => panic!("expected RemoveNetwork via 'd'"),
+        }
+
+        assert!(matches!(
+            table
+                .handle_resource_key_event(KeyEvent::from(KeyCode::Char('z')))
+                .unwrap(),
+            KeyOutcome::Fallthrough
+        ));
     }
 }

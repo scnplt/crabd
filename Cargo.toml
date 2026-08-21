@@ -1,6 +1,6 @@
 [package]
 name = "crabd"
-version = "0.2.1"
+version = "0.3.0"
 authors = ["Sertan Canpolat <58915038+scnplt@users.noreply.github.com>"]
 license-file = "LICENSE.txt"
 edition = "2024"
@@ -18,10 +18,11 @@ maintenance = { status = "actively-developed" }
 [dependencies]
 bollard = "0.18.1"
 color-eyre = "0.6.5"
-crossterm = { version = "0.28.1", features = ["event-stream"] }
+crossterm = { version = "0.29.0", features = ["event-stream"] }
 futures = "0.3.31"
-ratatui = "0.29.0"
+ratatui = "0.30.0"
 regex = "1.11.1"
 strum = "0.27.1"
 strum_macros = "0.27.1"
+thiserror = "2.0"
 tokio = {version = "1.44.2", features = ["full"]}

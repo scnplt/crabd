@@ -6,6 +6,28 @@ use ratatui::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const REFRESH_EVERY_TICKS: u8 = 2;
+
+#[derive(Default, Clone)]
+pub struct RefreshTicker {
+    skipped_tick_count: u8,
+}
+
+impl RefreshTicker {
+    /// Returns true once every `REFRESH_EVERY_TICKS` ticks, resetting the counter.
+    /// At `TICK_FPS = 5.0` that is every 400 ms, matching the previous cadence of
+    /// every 12 ticks at 30 FPS.
+    pub fn should_refresh(&mut self) -> bool {
+        self.skipped_tick_count += 1;
+        if self.skipped_tick_count >= REFRESH_EVERY_TICKS {
+            self.skipped_tick_count = 0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 pub struct TableStyle {
     pub header_style: Style,
     pub selected_row_style: Style,
@@ -33,11 +55,28 @@ impl Default for TableStyle {
     }
 }
 
-pub fn render_scrollbar(frame: &mut Frame, area: Rect, state: &mut ScrollbarState, is_vertical: bool) {
+pub fn render_scrollbar(
+    frame: &mut Frame,
+    area: Rect,
+    state: &mut ScrollbarState,
+    is_vertical: bool,
+) {
     let (orientation, begin_symbol, end_symbol, track_symbol, thumb_symbol) = if is_vertical {
-        (ScrollbarOrientation::VerticalRight, Some("^"), Some("v"), Some("│"), "█")
+        (
+            ScrollbarOrientation::VerticalRight,
+            Some("^"),
+            Some("v"),
+            Some("│"),
+            "█",
+        )
     } else {
-        (ScrollbarOrientation::HorizontalBottom, Some("<"), Some(">"), Some("─"), "■")
+        (
+            ScrollbarOrientation::HorizontalBottom,
+            Some("<"),
+            Some(">"),
+            Some("─"),
+            "■",
+        )
     };
 
     let scrollbar = Scrollbar::new(orientation)
@@ -72,7 +111,11 @@ pub fn time_ago_string(epoch_secs: i64) -> String {
         .as_secs() as i64;
 
     let diff = now - epoch_secs;
-    let abs_diff = diff.abs();
+    format_time_ago(diff)
+}
+
+fn format_time_ago(diff_secs: i64) -> String {
+    let abs_diff = diff_secs.abs();
 
     let (value, unit) = if abs_diff >= 31_536_000 {
         (abs_diff / 31_536_000, "year")
@@ -90,9 +133,60 @@ pub fn time_ago_string(epoch_secs: i64) -> String {
 
     let plural = if value == 1 { "" } else { "s" };
 
-    if diff >= 0 {
+    if diff_secs >= 0 {
         format!("{value} {unit}{plural} ago")
     } else {
         format!("in {value} {unit}{plural}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refresh_ticker_fires_every_second_tick() {
+        let mut ticker = RefreshTicker::default();
+
+        assert!(!ticker.should_refresh());
+        assert!(ticker.should_refresh());
+
+        assert!(!ticker.should_refresh());
+        assert!(ticker.should_refresh());
+    }
+
+    #[test]
+    fn format_time_ago_unit_boundaries() {
+        assert_eq!(format_time_ago(59), "59 seconds ago");
+        assert_eq!(format_time_ago(60), "1 minute ago");
+        assert_eq!(format_time_ago(3_600), "1 hour ago");
+        assert_eq!(format_time_ago(86_400), "1 day ago");
+        assert_eq!(format_time_ago(2_592_000), "1 month ago");
+        assert_eq!(format_time_ago(31_536_000), "1 year ago");
+    }
+
+    #[test]
+    fn format_time_ago_plural_vs_singular() {
+        assert_eq!(format_time_ago(120), "2 minutes ago");
+    }
+
+    #[test]
+    fn format_time_ago_zero_diff() {
+        assert_eq!(format_time_ago(0), "0 seconds ago");
+    }
+
+    #[test]
+    fn format_time_ago_negative_diff_is_in_the_future() {
+        assert_eq!(format_time_ago(-300), "in 5 minutes");
+    }
+
+    #[test]
+    fn time_ago_string_smoke_test_for_now() {
+        let now_epoch = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_secs() as i64;
+
+        assert!(time_ago_string(now_epoch).starts_with("0 second"));
     }
 }
