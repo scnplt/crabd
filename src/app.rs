@@ -2,6 +2,7 @@ use crate::docker::client::{DockerApi, DockerClient};
 use crate::docker::error::{DockerError, DockerResult};
 use crate::event::{AppEvent, DockerOutcome, Event, EventHandler, ResourceKind};
 use crate::ui::container_info_block::{ContainerData, ContainerInfoBlock};
+use crate::ui::container_logs_block::ContainerLogsBlock;
 use crate::ui::container_table::{ContainerTable, ContainerTableRow};
 use crate::ui::image_table::{ImageTable, ImageTableRow};
 use crate::ui::info_block::ScrollableInfoBlock;
@@ -9,6 +10,7 @@ use crate::ui::network_table::{NetworkTable, NetworkTableRow};
 use crate::ui::resource_table::{ResourceRow, ResourceTable};
 use crate::ui::volume_table::{VolumeTable, VolumeTableRow};
 use color_eyre::eyre::Result;
+use futures::StreamExt;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::palette::tailwind;
@@ -22,6 +24,7 @@ use ratatui::{
 use std::future::Future;
 use strum::IntoEnumIterator;
 use strum_macros::{Display, EnumIter, FromRepr};
+use tokio::task::JoinHandle;
 
 pub struct App<C: DockerApi> {
     running: bool,
@@ -29,13 +32,21 @@ pub struct App<C: DockerApi> {
     docker_client: C,
     selected_tab: SelectedTab,
     container_table: ContainerTable,
-    container_info: Option<Box<dyn ScrollableInfoBlock<Data = ContainerData>>>,
+    overlay: Option<Overlay>,
+    logs_task: Option<JoinHandle<()>>,
+    logs_session: u64,
     volume_table: VolumeTable,
     network_table: NetworkTable,
     image_table: ImageTable,
     pending: PendingRefreshes,
     details_requested: bool,
     dirty: bool,
+}
+
+/// At most one full-screen overlay can be open over the tab view at a time.
+enum Overlay {
+    Info(Box<dyn ScrollableInfoBlock<Data = ContainerData>>),
+    Logs(ContainerLogsBlock),
 }
 
 /// Tracks in-flight list requests so `App` never has more than one outstanding
@@ -57,7 +68,9 @@ impl App<DockerClient> {
             docker_client: DockerClient::new()?,
             selected_tab: SelectedTab::default(),
             container_table: ContainerTable::default(),
-            container_info: None,
+            overlay: None,
+            logs_task: None,
+            logs_session: 0,
             volume_table: VolumeTable::default(),
             network_table: NetworkTable::default(),
             image_table: ImageTable::default(),
@@ -80,7 +93,9 @@ impl<C: DockerApi> App<C> {
             docker_client,
             selected_tab: SelectedTab::default(),
             container_table: ContainerTable::default(),
-            container_info: None,
+            overlay: None,
+            logs_task: None,
+            logs_session: 0,
             volume_table: VolumeTable::default(),
             network_table: NetworkTable::default(),
             image_table: ImageTable::default(),
@@ -111,12 +126,18 @@ impl<C: DockerApi> App<C> {
         let header_horizontal = Layout::horizontal([Min(0), Length(6)]);
         let [tabs_area, title_area] = header_horizontal.areas(header_area);
 
-        if let Some(info_block) = self.container_info.as_mut() {
-            let _ = info_block.draw(frame, area);
-        } else {
-            render_title(frame, title_area);
-            self.render_tabs(frame, tabs_area);
-            let _ = self.render_selected_tab(frame, inner_area);
+        match self.overlay.as_mut() {
+            Some(Overlay::Info(block)) => {
+                let _ = block.draw(frame, area);
+            }
+            Some(Overlay::Logs(block)) => {
+                let _ = block.draw(frame, area);
+            }
+            None => {
+                render_title(frame, title_area);
+                self.render_tabs(frame, tabs_area);
+                let _ = self.render_selected_tab(frame, inner_area);
+            }
         }
     }
 
@@ -185,6 +206,7 @@ impl<C: DockerApi> App<C> {
                     AppEvent::KillContainer(id) => self.request_kill_container(id),
                     AppEvent::RemoveContainer(id) => self.request_remove_container(id),
                     AppEvent::GoToContainerDetails(id) => self.request_container_details_open(id),
+                    AppEvent::GoToContainerLogs { id, name } => self.open_logs(id, name),
                     AppEvent::UpdateVolumes => self.request_volumes(),
                     AppEvent::RemoveVolume(name, force) => self.request_remove_volume(name, force),
                     AppEvent::UpdateNetworks => self.request_networks(),
@@ -193,7 +215,8 @@ impl<C: DockerApi> App<C> {
                     AppEvent::RemoveImage(id, force) => self.request_remove_image(id, force),
                     AppEvent::Back => {
                         self.details_requested = false;
-                        self.container_info = None;
+                        self.close_logs();
+                        self.overlay = None;
                     }
                 }
             }
@@ -206,8 +229,10 @@ impl<C: DockerApi> App<C> {
             return Ok(Some(AppEvent::Quit));
         }
 
-        if let Some(info) = self.container_info.as_mut() {
-            return info.handle_key_event(key_event);
+        match self.overlay.as_mut() {
+            Some(Overlay::Info(block)) => return block.handle_key_event(key_event),
+            Some(Overlay::Logs(block)) => return block.handle_key_event(key_event),
+            None => {}
         }
 
         let event = match key_event.code {
@@ -239,8 +264,10 @@ impl<C: DockerApi> App<C> {
     }
 
     fn tick(&mut self) -> Result<Option<AppEvent>> {
-        if let Some(info) = self.container_info.as_mut() {
-            return info.tick();
+        match self.overlay.as_mut() {
+            Some(Overlay::Info(block)) => return block.tick(),
+            Some(Overlay::Logs(_)) => return Ok(None),
+            None => {}
         }
 
         let event = match self.selected_tab {
@@ -254,6 +281,7 @@ impl<C: DockerApi> App<C> {
     }
 
     fn quit(&mut self) {
+        self.close_logs();
         self.running = false;
     }
 
@@ -382,6 +410,62 @@ impl<C: DockerApi> App<C> {
         });
     }
 
+    /// Opens the full-screen log view for `id` and starts a background task that
+    /// pumps the log stream into the event channel as `DockerOutcome::ContainerLogChunk`
+    /// batches. `logs_session` tags every chunk so events from a stream aborted by a
+    /// later `close_logs()` (still queued in the unbounded channel) are dropped on arrival.
+    fn open_logs(&mut self, id: String, name: String) {
+        self.close_logs();
+        self.logs_session += 1;
+        let session = self.logs_session;
+        self.overlay = Some(Overlay::Logs(ContainerLogsBlock::new(id.clone(), name)));
+        self.dirty = true;
+
+        let client = self.docker_client.clone();
+        let sender = self.events.sender();
+        self.logs_task = Some(tokio::spawn(async move {
+            let mut chunks = Box::pin(client.container_logs(&id, 500).ready_chunks(64));
+            while let Some(batch) = chunks.next().await {
+                let mut lines = Vec::new();
+                let mut stream_error = None;
+                for result in batch {
+                    match result {
+                        Ok(chunk) => lines.extend(split_lines(chunk)),
+                        Err(e) => {
+                            stream_error = Some(e);
+                            break;
+                        }
+                    }
+                }
+                if !lines.is_empty() {
+                    let _ = sender.send(Event::Docker(DockerOutcome::ContainerLogChunk {
+                        session,
+                        lines,
+                    }));
+                }
+                if let Some(error) = stream_error {
+                    let _ = sender.send(Event::Docker(DockerOutcome::ContainerLogsEnded {
+                        session,
+                        error: Some(error),
+                    }));
+                    return;
+                }
+            }
+            let _ = sender.send(Event::Docker(DockerOutcome::ContainerLogsEnded {
+                session,
+                error: None,
+            }));
+        }));
+    }
+
+    /// Aborts any in-flight log stream task and invalidates its already-queued events.
+    fn close_logs(&mut self) {
+        if let Some(task) = self.logs_task.take() {
+            task.abort();
+        }
+        self.logs_session += 1;
+    }
+
     fn request_restart_container(&mut self, id: String) {
         self.begin_action(SelectedTab::Containers);
         self.spawn_docker(|c| async move {
@@ -507,9 +591,9 @@ impl<C: DockerApi> App<C> {
                     }
                     let mut container_info_block = ContainerInfoBlock::default();
                     container_info_block.update_data(data);
-                    self.container_info = Some(Box::new(container_info_block));
+                    self.overlay = Some(Overlay::Info(Box::new(container_info_block)));
                     self.dirty = true;
-                } else if let Some(block) = self.container_info.as_mut() {
+                } else if let Some(Overlay::Info(block)) = self.overlay.as_mut() {
                     self.dirty |= block.update_data(data);
                 }
             }
@@ -518,6 +602,22 @@ impl<C: DockerApi> App<C> {
                 self.end_action(tab);
                 self.ok_or_report(tab, result);
             }
+            DockerOutcome::ContainerLogChunk { session, lines } => {
+                if session != self.logs_session {
+                    return;
+                }
+                if let Some(Overlay::Logs(block)) = self.overlay.as_mut() {
+                    self.dirty |= block.push_lines(lines);
+                }
+            }
+            DockerOutcome::ContainerLogsEnded { session, error } => {
+                if session != self.logs_session {
+                    return;
+                }
+                if let Some(Overlay::Logs(block)) = self.overlay.as_mut() {
+                    self.dirty |= block.mark_ended(error);
+                }
+            }
         }
     }
 }
@@ -525,6 +625,20 @@ impl<C: DockerApi> App<C> {
 fn render_title(frame: &mut Frame, area: Rect) {
     let title = " crabd".bold();
     frame.render_widget(title, area);
+}
+
+/// Splits a decoded log chunk into individual lines. A frame without a trailing
+/// newline becomes its own line (no carry-over buffer across chunks).
+fn split_lines(chunk: String) -> Vec<String> {
+    if chunk.is_empty() {
+        return Vec::new();
+    }
+
+    let mut lines: Vec<String> = chunk.split('\n').map(str::to_string).collect();
+    if chunk.ends_with('\n') {
+        lines.pop();
+    }
+    lines
 }
 
 #[derive(Default, Display, FromRepr, EnumIter, Clone, Copy)]
@@ -572,6 +686,7 @@ mod tests {
         Network, Volume, VolumeListResponse,
     };
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Default)]
@@ -581,6 +696,7 @@ mod tests {
         networks: Vec<Network>,
         images: Vec<ImageSummary>,
         inspect: Option<ContainerInspectResponse>,
+        log_lines: Vec<String>,
         fail_with: Option<DockerError>,
         calls: Arc<Mutex<Vec<String>>>,
     }
@@ -694,6 +810,20 @@ mod tests {
                 Some(e) => Err(e.clone()),
                 None => Ok(()),
             }
+        }
+
+        fn container_logs(
+            &self,
+            container_id: &str,
+            tail: usize,
+        ) -> impl futures::Stream<Item = DockerResult<String>> + Send {
+            self.record(format!("container_logs:{container_id}:{tail}"));
+            let items: Vec<DockerResult<String>> = if let Some(e) = &self.fail_with {
+                vec![Err(e.clone())]
+            } else {
+                self.log_lines.iter().cloned().map(Ok).collect()
+            };
+            futures::stream::iter(items)
         }
     }
 
@@ -922,7 +1052,7 @@ mod tests {
                 ..Default::default()
             })),
         });
-        assert!(app.container_info.is_some());
+        assert!(matches!(app.overlay, Some(Overlay::Info(_))));
 
         let event = app.handle_key_event(KeyEvent::from(KeyCode::Esc)).unwrap();
         assert!(matches!(event, Some(AppEvent::Back)));
@@ -1033,7 +1163,7 @@ mod tests {
 
         app.request_container_details_open("container-id".to_string());
         app.details_requested = false;
-        app.container_info = None;
+        app.overlay = None;
 
         app.apply_docker_outcome(DockerOutcome::ContainerInspected {
             open_details: true,
@@ -1043,7 +1173,7 @@ mod tests {
             })),
         });
 
-        assert!(app.container_info.is_none());
+        assert!(app.overlay.is_none());
     }
 
     #[tokio::test]
@@ -1269,7 +1399,7 @@ mod tests {
             open_details: true,
             result: Ok(Box::new(inspect.clone())),
         });
-        assert!(app.container_info.is_some());
+        assert!(matches!(app.overlay, Some(Overlay::Info(_))));
         app.dirty = false;
 
         app.apply_docker_outcome(DockerOutcome::ContainerInspected {
@@ -1290,5 +1420,171 @@ mod tests {
             result: Ok(Box::new(changed_inspect)),
         });
         assert!(app.dirty);
+    }
+
+    #[tokio::test]
+    async fn g_on_container_table_opens_logs_overlay_and_spawns_task() {
+        let mock = MockDockerClient::default();
+        let calls = mock.calls.clone();
+        let mut app = App::with_client(mock);
+
+        app.apply_docker_outcome(DockerOutcome::ContainersListed(Ok(vec![
+            container_summary("a"),
+        ])));
+        app.container_table.select_row(0);
+
+        let event = app
+            .handle_key_event(KeyEvent::from(KeyCode::Char('g')))
+            .unwrap();
+        assert!(matches!(event, Some(AppEvent::GoToContainerLogs { .. })));
+
+        app.events.send(event.unwrap());
+        app.process_next_event().await.unwrap();
+
+        assert!(matches!(app.overlay, Some(Overlay::Logs(_))));
+        assert!(app.logs_task.is_some());
+
+        // Let the spawned pump task run and reach the mock client.
+        let _ = app.events.next().await.unwrap();
+        assert!(
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|c| c.starts_with("container_logs:"))
+        );
+    }
+
+    #[tokio::test]
+    async fn log_chunks_flow_through_the_channel_into_the_block() {
+        let mock = MockDockerClient {
+            log_lines: vec!["hello\n".to_string(), "world\n".to_string()],
+            ..Default::default()
+        };
+        let mut app = App::with_client(mock);
+
+        app.open_logs("container-id".to_string(), "my-container".to_string());
+        app.dirty = false;
+
+        // First queued event is the coalesced chunk.
+        app.process_next_event().await.unwrap();
+        assert!(app.dirty);
+
+        // Second is the clean end-of-stream marker.
+        app.process_next_event().await.unwrap();
+
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| app.draw(f, f.area())).unwrap();
+        let buffer: &Buffer = terminal.backend().buffer();
+        let content: String = buffer.content.iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("hello"));
+        assert!(content.contains("world"));
+        assert!(content.contains("stream ended"));
+    }
+
+    #[tokio::test]
+    async fn container_log_chunk_marks_dirty_for_the_current_session() {
+        let mock = MockDockerClient::default();
+        let mut app = App::with_client(mock);
+
+        app.open_logs("container-id".to_string(), "my-container".to_string());
+        let session = app.logs_session;
+        app.dirty = false;
+
+        app.apply_docker_outcome(DockerOutcome::ContainerLogChunk {
+            session,
+            lines: vec!["hello".to_string()],
+        });
+
+        assert!(app.dirty);
+    }
+
+    #[tokio::test]
+    async fn stale_session_chunk_is_ignored() {
+        let mock = MockDockerClient::default();
+        let mut app = App::with_client(mock);
+
+        app.open_logs("container-id".to_string(), "my-container".to_string());
+        let stale_session = app.logs_session;
+        // Re-open invalidates the previous session.
+        app.open_logs("container-id".to_string(), "my-container".to_string());
+        app.dirty = false;
+
+        app.apply_docker_outcome(DockerOutcome::ContainerLogChunk {
+            session: stale_session,
+            lines: vec!["late".to_string()],
+        });
+
+        assert!(!app.dirty);
+    }
+
+    #[tokio::test]
+    async fn back_aborts_the_log_stream_and_drops_late_chunks() {
+        let mock = MockDockerClient::default();
+        let mut app = App::with_client(mock);
+
+        app.open_logs("container-id".to_string(), "my-container".to_string());
+        let session = app.logs_session;
+        assert!(app.logs_task.is_some());
+
+        app.events.send(AppEvent::Back);
+        app.process_next_event().await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(app.logs_task.is_none());
+
+        app.dirty = false;
+        app.apply_docker_outcome(DockerOutcome::ContainerLogChunk {
+            session,
+            lines: vec!["late".to_string()],
+        });
+        assert!(!app.dirty);
+    }
+
+    #[tokio::test]
+    async fn container_logs_ended_marks_the_block_clean_and_with_error() {
+        let mock = MockDockerClient::default();
+        let mut app = App::with_client(mock);
+
+        app.open_logs("container-id".to_string(), "my-container".to_string());
+        let session = app.logs_session;
+        app.dirty = false;
+
+        app.apply_docker_outcome(DockerOutcome::ContainerLogsEnded {
+            session,
+            error: None,
+        });
+        assert!(app.dirty);
+
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| app.draw(f, f.area())).unwrap();
+        let buffer: &Buffer = terminal.backend().buffer();
+        let content: String = buffer.content.iter().map(|c| c.symbol()).collect();
+        assert!(content.contains("stream ended"));
+
+        app.dirty = false;
+        app.apply_docker_outcome(DockerOutcome::ContainerLogsEnded {
+            session,
+            error: Some(DockerError::Other {
+                message: "boom".to_string(),
+            }),
+        });
+        assert!(app.dirty);
+    }
+
+    #[tokio::test]
+    async fn char_l_does_not_switch_tabs_while_logs_open() {
+        let mock = MockDockerClient::default();
+        let mut app = App::with_client(mock);
+
+        app.open_logs("container-id".to_string(), "my-container".to_string());
+        let tab_before = app.selected_tab as usize;
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('l')))
+            .unwrap();
+
+        assert_eq!(app.selected_tab as usize, tab_before);
     }
 }

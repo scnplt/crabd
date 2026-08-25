@@ -96,10 +96,20 @@ impl ResourceTable for ContainerTable {
                 self.selected_row()
                     .map(|c| AppEvent::GoToContainerDetails(c.id.clone())),
             ),
-            KeyCode::Char(c) => match (c, self.selected_row().map(|c| c.id.clone())) {
-                ('r', Some(id)) => KeyOutcome::Handled(Some(AppEvent::RestartContainer(id))),
-                ('s', Some(id)) => KeyOutcome::Handled(Some(AppEvent::StopContainer(id))),
-                ('x', Some(id)) => KeyOutcome::Handled(Some(AppEvent::KillContainer(id))),
+            KeyCode::Char(c) => match (c, self.selected_row()) {
+                ('r', Some(row)) => {
+                    KeyOutcome::Handled(Some(AppEvent::RestartContainer(row.id.clone())))
+                }
+                ('s', Some(row)) => {
+                    KeyOutcome::Handled(Some(AppEvent::StopContainer(row.id.clone())))
+                }
+                ('x', Some(row)) => {
+                    KeyOutcome::Handled(Some(AppEvent::KillContainer(row.id.clone())))
+                }
+                ('g', Some(row)) => KeyOutcome::Handled(Some(AppEvent::GoToContainerLogs {
+                    id: row.id.clone(),
+                    name: row.name.clone(),
+                })),
                 _ => KeyOutcome::Fallthrough,
             },
             _ => KeyOutcome::Fallthrough,
@@ -194,7 +204,7 @@ fn get_footer_text(show_all: bool, is_running: Option<bool>) -> String {
         op_text = format!(" | <R> {running_text}| <Del/D> remove");
     }
 
-    format!(" <Ent> details | <T> {toggle_text}{op_text}")
+    format!(" <Ent> details | <G> logs | <T> {toggle_text}{op_text}")
 }
 
 #[cfg(test)]
@@ -287,7 +297,7 @@ mod tests {
     #[test]
     fn get_footer_text_variants() {
         let text = get_footer_text(true, None);
-        assert_eq!(text, " <Ent> details | <T> All");
+        assert_eq!(text, " <Ent> details | <G> logs | <T> All");
 
         let text = get_footer_text(true, Some(true));
         assert!(text.contains("restart | <S> stop | <X> kill"));
@@ -350,6 +360,16 @@ mod tests {
         {
             KeyOutcome::Handled(Some(AppEvent::GoToContainerDetails(got))) => assert_eq!(got, id),
             _ => panic!("expected GoToContainerDetails"),
+        }
+
+        match table
+            .handle_resource_key_event(KeyEvent::from(KeyCode::Char('g')))
+            .unwrap()
+        {
+            KeyOutcome::Handled(Some(AppEvent::GoToContainerLogs { id: got, .. })) => {
+                assert_eq!(got, id)
+            }
+            _ => panic!("expected GoToContainerLogs"),
         }
 
         match table

@@ -1,7 +1,7 @@
 use bollard::Docker;
 use bollard::container::{
-    InspectContainerOptions, KillContainerOptions, ListContainersOptions, RemoveContainerOptions,
-    RestartContainerOptions, StopContainerOptions,
+    InspectContainerOptions, KillContainerOptions, ListContainersOptions, LogOutput, LogsOptions,
+    RemoveContainerOptions, RestartContainerOptions, StopContainerOptions,
 };
 use bollard::image::{ListImagesOptions, RemoveImageOptions};
 use bollard::models::ContainerSummary;
@@ -9,9 +9,17 @@ use bollard::network::ListNetworksOptions;
 use bollard::secret::{ContainerInspectResponse, ImageSummary, Network, VolumeListResponse};
 use bollard::volume::{ListVolumesOptions, RemoveVolumeOptions};
 use color_eyre::eyre::Result;
+use futures::{Stream, StreamExt};
+use regex::Regex;
 use std::future::Future;
+use std::sync::LazyLock;
 
-use crate::docker::error::DockerResult;
+use crate::docker::error::{DockerError, DockerResult};
+
+/// Matches ANSI escape sequences (CSI and simple two-byte forms) so raw
+/// container log output can be shown as plain text.
+static ANSI_ESCAPE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-_]").unwrap());
 
 #[derive(Clone)]
 pub struct DockerClient {
@@ -52,6 +60,11 @@ pub trait DockerApi: Clone + Send + Sync + 'static {
     fn remove_network(&self, name: &str) -> impl Future<Output = DockerResult<()>> + Send;
     fn list_images(&self) -> impl Future<Output = DockerResult<Vec<ImageSummary>>> + Send;
     fn remove_image(&self, id: &str, force: bool) -> impl Future<Output = DockerResult<()>> + Send;
+    fn container_logs(
+        &self,
+        container_id: &str,
+        tail: usize,
+    ) -> impl Stream<Item = DockerResult<String>> + Send;
 }
 
 impl DockerApi for DockerClient {
@@ -149,5 +162,70 @@ impl DockerApi for DockerClient {
         });
         self.client.remove_image(id, options, None).await?;
         Ok(())
+    }
+
+    fn container_logs(
+        &self,
+        container_id: &str,
+        tail: usize,
+    ) -> impl Stream<Item = DockerResult<String>> + Send {
+        self.client
+            .logs(
+                container_id,
+                Some(LogsOptions::<String> {
+                    follow: true,
+                    stdout: true,
+                    stderr: true,
+                    tail: tail.to_string(),
+                    ..Default::default()
+                }),
+            )
+            .map(|r| r.map_err(DockerError::from).map(log_output_to_string))
+    }
+}
+
+/// Converts a single `LogOutput` frame to a plain-text line: lossily decodes
+/// the bytes, strips ANSI escape sequences and carriage returns. StdOut,
+/// StdErr and Console frames are treated alike.
+fn log_output_to_string(output: LogOutput) -> String {
+    let text = String::from_utf8_lossy(&output.into_bytes()).into_owned();
+    let text = ANSI_ESCAPE_RE.replace_all(&text, "");
+    text.replace('\r', "")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_output_to_string_strips_ansi_and_carriage_returns() {
+        let message = b"\x1b[32mhello\x1b[0m world\r\n".as_slice().into();
+        let text = log_output_to_string(LogOutput::StdOut { message });
+        assert_eq!(text, "hello world\n");
+    }
+
+    #[test]
+    fn log_output_to_string_lossy_decodes_invalid_utf8() {
+        let message = [b'a', 0xff, b'b'].as_slice().into();
+        let text = log_output_to_string(LogOutput::StdErr { message });
+        assert!(text.starts_with('a'));
+        assert!(text.ends_with('b'));
+    }
+
+    #[test]
+    fn log_output_to_string_treats_all_frame_kinds_alike() {
+        let message = b"line\n".as_slice();
+        assert_eq!(
+            log_output_to_string(LogOutput::Console {
+                message: message.into()
+            }),
+            "line\n"
+        );
+        assert_eq!(
+            log_output_to_string(LogOutput::StdIn {
+                message: message.into()
+            }),
+            "line\n"
+        );
     }
 }
