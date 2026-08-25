@@ -35,6 +35,9 @@ pub struct App<C: DockerApi> {
     overlay: Option<Overlay>,
     logs_task: Option<JoinHandle<()>>,
     logs_session: u64,
+    /// Set when the log view was opened from the details overlay, so `Back`
+    /// returns to the details of this container instead of the table.
+    logs_return_to_details: Option<String>,
     volume_table: VolumeTable,
     network_table: NetworkTable,
     image_table: ImageTable,
@@ -71,6 +74,7 @@ impl App<DockerClient> {
             overlay: None,
             logs_task: None,
             logs_session: 0,
+            logs_return_to_details: None,
             volume_table: VolumeTable::default(),
             network_table: NetworkTable::default(),
             image_table: ImageTable::default(),
@@ -96,6 +100,7 @@ impl<C: DockerApi> App<C> {
             overlay: None,
             logs_task: None,
             logs_session: 0,
+            logs_return_to_details: None,
             volume_table: VolumeTable::default(),
             network_table: NetworkTable::default(),
             image_table: ImageTable::default(),
@@ -215,8 +220,15 @@ impl<C: DockerApi> App<C> {
                     AppEvent::RemoveImage(id, force) => self.request_remove_image(id, force),
                     AppEvent::Back => {
                         self.details_requested = false;
+                        let return_to_details = match self.overlay {
+                            Some(Overlay::Logs(_)) => self.logs_return_to_details.take(),
+                            _ => None,
+                        };
                         self.close_logs();
                         self.overlay = None;
+                        if let Some(id) = return_to_details {
+                            self.request_container_details_open(id);
+                        }
                     }
                 }
             }
@@ -415,6 +427,8 @@ impl<C: DockerApi> App<C> {
     /// batches. `logs_session` tags every chunk so events from a stream aborted by a
     /// later `close_logs()` (still queued in the unbounded channel) are dropped on arrival.
     fn open_logs(&mut self, id: String, name: String) {
+        self.logs_return_to_details =
+            matches!(self.overlay, Some(Overlay::Info(_))).then(|| id.clone());
         self.close_logs();
         self.logs_session += 1;
         let session = self.logs_session;
@@ -1540,6 +1554,57 @@ mod tests {
             lines: vec!["late".to_string()],
         });
         assert!(!app.dirty);
+    }
+
+    #[tokio::test]
+    async fn back_from_logs_opened_from_details_returns_to_details() {
+        let mock = MockDockerClient {
+            inspect: Some(ContainerInspectResponse {
+                id: Some("container-id".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut app = App::with_client(mock);
+
+        // Open the details overlay first, then jump to logs from it.
+        app.request_container_details_open("container-id".to_string());
+        app.process_next_event().await.unwrap();
+        assert!(matches!(app.overlay, Some(Overlay::Info(_))));
+
+        app.open_logs("container-id".to_string(), "container-id".to_string());
+        assert!(matches!(app.overlay, Some(Overlay::Logs(_))));
+
+        app.events.send(AppEvent::Back);
+        app.process_next_event().await.unwrap();
+
+        // Back triggers a fresh inspect that re-opens the details overlay;
+        // any stale log events still queued are dropped by the session guard.
+        assert!(app.details_requested);
+        while !matches!(app.overlay, Some(Overlay::Info(_))) {
+            app.process_next_event().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn back_from_logs_opened_from_table_returns_to_table() {
+        let mock = MockDockerClient::default();
+        let calls = mock.calls.clone();
+        let mut app = App::with_client(mock);
+
+        app.open_logs("container-id".to_string(), "container-id".to_string());
+        app.events.send(AppEvent::Back);
+        app.process_next_event().await.unwrap();
+
+        assert!(app.overlay.is_none());
+        assert!(!app.details_requested);
+        assert!(
+            !calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|c| c.starts_with("inspect_container"))
+        );
     }
 
     #[tokio::test]
