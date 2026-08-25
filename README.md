@@ -8,6 +8,8 @@ A terminal-based Docker resource manager written in Rust. Easily view, manage, a
 
 - List and manage Docker containers, images, networks, and volumes
 - Start, stop, restart, kill, and remove containers
+- Inspect container details (image, state, ports, mounts, env, labels, ...)
+- View container logs with live follow, for running and stopped containers
 - Filter running/all containers
 - Keyboard-driven navigation (see Keymap below)
 
@@ -31,18 +33,35 @@ git clone https://github.com/scnplt/crabd.git && cd crabd
 cargo run --release
 ```
 
-## Keymap 
+## Keymap
 
-| Key     | Description      |
-|---------|-----------------|
-| J       | Down            |
-| K       | Up              |
-| Q       | Quit/Back       |
-| T       | Show all/only running |
-| R       | Start/Restart   |
-| S       | Stop            |
-| X       | Kill            |
-| Del/D   | Remove          |
+### General
+
+| Key       | Description            |
+|-----------|------------------------|
+| ←/→ or H/L | Switch tab            |
+| ↓/↑ or J/K | Down / Up             |
+| Esc/Q     | Quit / Back            |
+
+### Containers
+
+| Key     | Description                  |
+|---------|------------------------------|
+| Enter   | Container details            |
+| G       | Container logs (also from the details screen) |
+| T       | Show all/only running        |
+| R       | Start/Restart                |
+| S       | Stop                         |
+| X       | Kill                         |
+| Del/D   | Remove                       |
+
+### Details & log view
+
+| Key             | Description                          |
+|-----------------|--------------------------------------|
+| ↓/↑/←/→ or HJKL | Scroll                               |
+| PgUp/PgDn       | Jump to top / bottom (details view)  |
+| F/End           | Follow logs (in log view)            |
 
 ## Things To Do
 

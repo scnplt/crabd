@@ -8,7 +8,7 @@ use ratatui::crossterm::event::{Event::Key, Event::Resize, KeyEvent};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-use crate::docker::error::DockerResult;
+use crate::docker::error::{DockerError, DockerResult};
 
 /// Ticks now only drive Docker refresh scheduling, not rendering.
 const TICK_FPS: f64 = 5.0;
@@ -32,6 +32,7 @@ pub enum AppEvent {
     KillContainer(String),
     RemoveContainer(String),
     GoToContainerDetails(String),
+    GoToContainerLogs { id: String, name: String },
     UpdateVolumes,
     RemoveVolume(String, bool),
     UpdateNetworks,
@@ -56,6 +57,14 @@ pub enum DockerOutcome {
     ActionCompleted {
         resource: ResourceKind,
         result: DockerResult<()>,
+    },
+    ContainerLogChunk {
+        session: u64,
+        lines: Vec<String>,
+    },
+    ContainerLogsEnded {
+        session: u64,
+        error: Option<DockerError>,
     },
 }
 
