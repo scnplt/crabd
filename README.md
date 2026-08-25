@@ -43,6 +43,8 @@ cargo run --release
 | S       | Stop            |
 | X       | Kill            |
 | Del/D   | Remove          |
+| G       | Container logs  |
+| F/End   | Follow logs (in log view) |
 
 ## Things To Do
 

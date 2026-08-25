@@ -76,6 +76,10 @@ impl ScrollableInfoBlock for ContainerInfoBlock {
             KeyCode::Char('r') => Some(AppEvent::RestartContainer(self.data.id.clone())),
             KeyCode::Char('s') => Some(AppEvent::StopContainer(self.data.id.clone())),
             KeyCode::Char('x') => Some(AppEvent::KillContainer(self.data.id.clone())),
+            KeyCode::Char('g') => Some(AppEvent::GoToContainerLogs {
+                id: self.data.id.clone(),
+                name: self.data.name.clone(),
+            }),
             _ => self.handle_nav_key_event(key_event)?,
         };
         Ok(event)
@@ -295,7 +299,7 @@ fn get_footer_text(is_running: bool) -> String {
     } else {
         "| <R> start "
     };
-    format!(" <Esc/Q> back {op_text}| <Del/D> remove")
+    format!(" <Esc/Q> back | <G> logs {op_text}| <Del/D> remove")
 }
 
 impl ContainerData {
@@ -462,10 +466,12 @@ mod tests {
     #[test]
     fn get_footer_text_variants() {
         let running_text = get_footer_text(true);
+        assert!(running_text.contains("<G> logs"));
         assert!(running_text.contains("<R> restart | <S> stop | <X> kill"));
         assert!(running_text.contains("<Del/D> remove"));
 
         let stopped_text = get_footer_text(false);
+        assert!(stopped_text.contains("<G> logs"));
         assert!(stopped_text.contains("<R> start"));
         assert!(stopped_text.contains("<Del/D> remove"));
     }
@@ -509,6 +515,15 @@ mod tests {
             .handle_key_event(KeyEvent::from(KeyCode::Char('x')))
             .unwrap();
         assert!(matches!(event, Some(AppEvent::KillContainer(id)) if id == "container-id"));
+
+        let event = block
+            .handle_key_event(KeyEvent::from(KeyCode::Char('g')))
+            .unwrap();
+        assert!(matches!(
+            event,
+            Some(AppEvent::GoToContainerLogs { id, name })
+                if id == "container-id" && name == "container-id"
+        ));
 
         let event = block
             .handle_key_event(KeyEvent::from(KeyCode::Char('q')))
